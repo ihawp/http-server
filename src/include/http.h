@@ -6,6 +6,8 @@
 #include "line_in_memory_array.h"
 #include "string_view.h"
 #include "hash_table.h"
+#include "http_struct.h"
+#include "state_machine.h"
 
 // TODO: rename and organize and refactor and rethink!
 #define MAX_EVENTS 10
@@ -21,27 +23,11 @@
 #define PATH_SIZE 512
 #define CHAR_SIZE sizeof(char)
 
-typedef struct {
-	ht *headers;
-	char *header_storage;
-	char *body;
-	long content_length;
-
-	// allocate on heap with malloc()
-	char *method; // REQ_METHOD_SIZE
-	char *path; // REQ_PATH_SIZE
-	char *http_version; // REQ_HTTP_VERSION_SIZE
-} HTTPRequest;
-
-typedef struct {
-	int status;
-} HTTPResponse;
-
-void freeHTTPRequest(
+void free_http_request(
 	HTTPRequest *hrq
 );
 
-void freeHTTPResponse(
+void free_http_response(
 	HTTPResponse *htr
 );
 
@@ -122,10 +108,9 @@ int handle_post_request(
 );
 
 int handle_request(
-	int *client_fd,
-	pid_t *tid,
-	HTTPRequest *http_request,
-	HTTPResponse *http_response
+	int client_fd,
+	pid_t tid,
+	UserState *user_state
 );
 
 void *http_worker(

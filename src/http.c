@@ -18,6 +18,7 @@
 #include "hash_table.h"
 #include "string_view.h"
 #include "state_machine.h"
+#include "http_struct.h"
 
 void free_http_response(
 	HTTPResponse *htr
@@ -332,7 +333,7 @@ int find_headers(
 					http_request->content_length = strtol(valuebuffer, NULL, 10);
 				}
 
-				ht_set(http_request->headers, keybuffer, valuebuffer);
+				ht_set(http_request->headers, HT_STR(keybuffer), valuebuffer);
 			}
 
 			last_line = i;
@@ -347,7 +348,7 @@ char *recv_header_chunks(
 	char *buffer,
 	ssize_t *recv_count
 ) {
-	size_t max_header_size = CLIENT_BUF_SIZE - 1;
+	size_t max_header_size = CLIENT_BUF_SIZE;
 	int status;
 	char *mmp;
 
@@ -453,7 +454,7 @@ int handle_get_request(
 	return 0;
 }
 
-int handle_post_request(
+int recv_body(
 	int *client_fd,
 	pid_t *tid,
 	HTTPRequest *http_request,
@@ -502,22 +503,22 @@ int handle_post_request(
 }
 
 // state machine architecture
-int handle_request2(
+int handle_request(
 	int client_fd,
 	pid_t tid,
 	UserState *user_state
 ) {
-	char *headers = xmalloc(CLIENT_BUF_SIZE), *body_start;
+	char *headers = xmalloc(CLIENT_BUF_SIZE + 1), *body_start;
 	ssize_t recv_count = 0;
 	size_t bs_size, body_length;
 	int r, hpr;
 
-	us->http_request->method = xmalloc(REQ_METHOD_SIZE);
-	us->http_request->path = xmalloc(REQ_PATH_SIZE);
-	us->http_request->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
+	user_state->http_request->method = xmalloc(REQ_METHOD_SIZE);
+	user_state->http_request->path = xmalloc(REQ_PATH_SIZE);
+	user_state->http_request->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
 
 	if (headers == NULL) {
-		printfid("Failed to allocate memory for headers", *tid);
+		printfid("Failed to allocate memory for headers", tid);
 		return -1;
 	}
 
@@ -525,122 +526,101 @@ int handle_request2(
 	// Where the state is an INT that maps to an enum
 	// defined in state_machine.h (typedef enum {...} State)
 
-	while (user_state->state != FINISHED) {
+	while (user_state->state != FIN) {
 		switch (user_state->state) {
 			case HEADERS:
 				// do get headers
+				body_start = recv_header_chunks(&client_fd, headers, &recv_count);
+				if (body_start == NULL) {
+					printfid("Failed to receive header chunks", tid);
+					return -1;
+				}
+
+				// ths bs_size tells us how many characters the actual headers are
+				// the recv_count - bs_size = the length of body
+				// already added, which will be used as the 3rd parameter of memmove
+				bs_size = body_start - headers;
+				body_length = recv_count - bs_size - 4; // remove 4 for \r\n\r\n
+				*body_start = '\0'; // add a null terminator for end of headers
+				body_start += 4; // move past \0\n\r\n to start of body content
+
+				user_state->http_request->header_storage = headers;
+				if (find_headers(user_state->http_request) == 0) return -1;
+
+				user_state->state = BODY;
+				
+				if (strcmp(user_state->http_request->method, "GET") == 0) {
+					user_state->state = GET;
+				}
+
+				break;
+			case GET:
+				if (handle_get_request(
+					&client_fd, 
+					&tid, 
+					user_state->http_request, 
+					user_state->http_response
+				) < 0) {
+					printfid("Failed to handle GET request", tid);
+					return -1;
+				}
 				break;
 			case BODY:
+
+				if (user_state->retries == 3) {
+					printfid("Too many retries for client: %d", tid, client_fd);
+					return -1;
+				}
+
+				hpr = recv_body(
+					&client_fd, 
+					&tid, 
+					user_state->http_request, 
+					body_start, 
+					body_length
+				);
+
+				// EAGAIN or EWOULDBLOCK
+				if (hpr == 1) return 1;
+				if (hpr < 0) {
+					printfid("Failed to handle POST request", tid);
+					return -1;
+				}
+
+				user_state->state = RESPONSE;
 				break;
 			case RESPONSE:
+				// do something with body
+				// send a response
+				send_json_response(
+					&client_fd, 
+					user_state->http_response->status, 
+					"{"
+						"\"success\": true,"
+						"\"message\": \"We recieved your data!\""
+					"}"
+				);
+
+				user_state->state = FIN;
 				break;
-			case FINISHED:
+			case ERROR:
+				user_state->http_response->status = 501;
+				return -1;
 				break;
 			default:
 				printfid("Failed to find state", tid);
 				break;
 		}
 	}
-}
 
-int handle_request(
-	int *client_fd,
-	pid_t *tid, 
-	UserState *us
-) {
-	// no +1 on CLIENT_BUF_SIZE because recv_header_chunks
-	// sets max recv amount to CLIENT_BUF_SIZE - 1
-	char *headers = xmalloc(CLIENT_BUF_SIZE), *body_start;
-	ssize_t recv_count = 0;
-	size_t bs_size, body_length;
-	int r, hpr;
-
-	us->http_request->method = xmalloc(REQ_METHOD_SIZE);
-	us->http_request->path = xmalloc(REQ_PATH_SIZE);
-	us->http_request->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
-
-	if (headers == NULL) {
-		printfid("Failed to allocate memory for headers", *tid);
-		return -1;
-	}
-
-	body_start = recv_header_chunks(client_fd, headers, &recv_count);
-	if (body_start == NULL) {
-		printfid("Failed to receive header chunks", *tid);
-		return -1;
-	}
-
-	// ths bs_size tells us how many characters the actual headers are
-	// the recv_count - bs_size = the length of body
-	// already added, which will be used as the 3rd parameter of memmove
-	bs_size = body_start - headers;
-	body_length = recv_count - bs_size - 4; // remove 4 for \r\n\r\n
-	*body_start = '\0'; // add a null terminator for end of headers
-	body_start += 4; // move past \0\n\r\n to start of body content
-
-	us->http_request->header_storage = headers;
-	if (find_headers(http_request) == 0) {
-		return -1;
-	}
-
-	if (strcmp(us->http_request->method, "POST") == 0) {
-		hpr = handle_post_request(
-			client_fd, 
-			tid, 
-			http_request, 
-			body_start, 
-			body_length
-		);
-
-		if (hpr == 1) {
-			// EAGAIN or EWOULDBLOCK
-			// send upchain :()
-			return 1;
-		}
-
-		if (hpr < 0) {
-			printfid("Failed to handle POST request", *tid);
-			return -1;
-		}
-
-		send_json_response(
-			client_fd, 
-			us->http_response->status, 
-			"{"
-				"\"success\": true,"
-				"\"message\": \"We recieved your data!\""
-			"}"
-		);
-	
-		return 0;
-	}
-
-	if (strcmp(us->http_request->method, "GET") == 0) {
-
-		if (handle_get_request(
-			client_fd, 
-			tid, 
-			us->http_request, 
-			us->http_response
-		) < 0) {
-			printfid("Failed to handle GET request", *tid);
-			return -1;
-		}
-
-		return 0;
-	}
-
-	// method not implemented
-	http_response->status = 501;
-
-	return -1;
+	printfid("Request finished for client: %d", tid, client_fd);
+	return 0;
 }
 
 void *http_worker(
 	void *data
 ) {
 	struct process_data *wd = data;
-
 	struct sockaddr_storage peer_addr = {0};
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	socklen_t peer_addrlen = sizeof(struct sockaddr_storage);
@@ -691,75 +671,61 @@ void *http_worker(
 				}
 			} else {
 
-				// client is ready
-				
-				/*
-					Should every user just get a UserState,
-					rather than just allocating httprequest/response
-					and then writing a bunch of extra boilerplate,
-					->state could hold the state and handle_request
-					could have if statements for each state, or use enum
-					map, whatever
-				*/
-				
-				fd = events[n].data.fd;
+				// data ready
 
-				// create a new user state for new client.
-				UserState us = {0};
+				fd = events[n].data.fd;
+				UserState *us;
 
 				// get information from hash table if available (state)
-				if (data->user_states[fd]) {
-					us = ht_get(&fd);
-					
-					// TODO: remove from the table
-					ht_remove(table, fd);
+				us = ht_get(wd->user_states, HT_INT(fd));
+				if (us != NULL) {
+					us->retries++;
+					ht_remove(wd->user_states, HT_INT(fd));
 				} else {
-					us = nus(fd); // create new struct
+					us = nus(fd);
 				}
 
-				/*
-				memset(&http_request, 0, sizeof(http_request));
-				memset(&http_response, 0, sizeof(http_response));
-				*/
-				http_response->status = 200;
+				// if still NULL close connection with client (below)
+				if (us != NULL) {
+					us->http_response->status = 200;
 
-				ps_cap(&speed.start);
-				
-				hr_result = handle_request(&fd, &tid, &us);
-				if (hr_result != 0) {
-					// have different types of errors to respond about, based on
-					// method as well, error for GET could be 404 page
-					// something like handle_request_failure(...)
+					ps_cap(&speed.start);
+					
+					hr_result = handle_request(fd, tid, us);
+					if (hr_result != 0) {
+						// have different types of errors to respond about, based on
+						// method as well, error for GET could be 404 page
+						// something like handle_request_failure(...)
 
-					#define RETRY_ERROR 1
-					if (hr_result == RETRY_ERROR) {
-						// create a new UserState and attach the HTTPRequest and HTTPResponse struct(s).
-						// return the fd to the epoll waitlist (and reenable) with MOD
-						printfid("Retry Error", tid);
-						continue;
+						#define RETRY_ERROR 1
+						if (hr_result == RETRY_ERROR) {
+							// return the fd to the epoll waitlist (and reenable) with MOD
+							printfid("Retry Error", tid);
+							continue;
+						}
+
+						// TODO: remove line below after setting 
+						// status where required throughout program
+						us->http_response->status = 500;
+
+						// handle_request_failure(&http_request, &http_response);
+
+						send_json_response(
+							&fd, 
+							us->http_response->status, 
+							"{"
+								"\"error\": \"Failed to handle request\","
+								"\"success\": false"
+							"}"
+						);
 					}
 
-					// TODO: remove line below after setting 
-					// status where required throughout program
-					http_response->status = 500;
-
-					// handle_request_failure(&http_request, &http_response);
-
-					send_json_response(
-						&fd, 
-						http_response->status, 
-						"{"
-							"\"error\": \"Failed to handle request\","
-							"\"success\": false"
-						"}"
-					);
+					ps_cap(&speed.end);
+					ps_print_elapsed(&speed, tid_p);
 				}
 
-				ps_cap(&speed.end);
-				ps_print_elapsed(&speed, tid_p);
-
-				free_http_request(&us->http_request);
-				free_http_response(&us->http_response);
+				// if still NULL close connection with client (below)
+				free_user_state(us);
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);
 			}

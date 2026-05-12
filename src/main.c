@@ -6,6 +6,7 @@
 #include "helpers.h"
 #include "tcp_server.h"
 #include "process_data.h"
+#include "state_machine.h"
 
 int main(
 	int argc,
@@ -17,6 +18,7 @@ int main(
 	pthread_t *wp = workers;
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	struct process_data data = {0}; // holds hash table for user state
+	UserState *us;
 
 	if (argc < 2) {
 		printf(
@@ -64,20 +66,30 @@ int main(
 
 	data.user_states = ht_create();
 
-	// run a loop that checks for expired hash table entries
-	// instead of using pause()
+	// remove expired clients (passed/at deadline)
 	for (;;) {
-		for (i = 0; i < data.user_states->capacity; i++) {
-			if (data.user_states->entries[i].key != NULL) {
-				char *got_val = ht_get(data.user_states, data.user_states->entries[i].key);
-				printfid("GOT VAL: %s", data.pid, got_val);
+		// collect expired, unlocked keys
+		ht_key expired[50];
+		size_t n = 0;
 
-				if (1 /* expired */) {
-					// delete from hashtable
-					// delete from epoll watchlist
-					// free memory
-				}
+		hti it = ht_iterator(data.user_states);
+		while (ht_next(&it)) {
+			us = it.value;
+			pthread_mutex_lock(&us->mutex);
+			bool is_expired = !us->lock && time(NULL) >= us->deadline;
+			pthread_mutex_unlock(&us->mutex);
+
+			if (is_expired) {
+				expired[n++] = it.key;
 			}
 		}
+
+		// then remove them
+		for (size_t i = 0; i < n; i++) {
+			ht_remove(data.user_states, expired[i]);
+			// remove from epoll waitlist too.
+		}
+
+		sleep(1);
 	}
 }
