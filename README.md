@@ -15,6 +15,7 @@
 - [Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
 - [Hexadecimal](https://en.wikipedia.org/wiki/Hexadecimal)
 - [Bitwise Operations + etc](https://www.ewskills.com/embedded-c/bitwise-operations)
+- [Response Splitting](https://owasp.org/www-community/attacks/HTTP_Response_Splitting)
 
 ## About
 

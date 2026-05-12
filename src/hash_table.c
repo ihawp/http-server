@@ -10,6 +10,8 @@
 
 #define INITIAL_CAPACITY 16  // must not be zero
 
+static ht_entry TOMBSTONE = { "__TOMBSTONE__", NULL };
+
 ht* ht_create(void) {
     // Allocate space for hash table struct.
     ht* table = malloc(sizeof(ht));
@@ -31,7 +33,9 @@ ht* ht_create(void) {
 void ht_destroy(ht* table) {
     // First free allocated keys.
     for (size_t i = 0; i < table->capacity; i++) {
-        free((void*)table->entries[i].key);
+        if (table->entries[i].key != NULL && table->entries[i].key != TOMBSTONE.key) {
+            free((void*)table->entries[i].key);
+        }
     }
 
     // Then free entries array and table itself.
@@ -60,7 +64,8 @@ void* ht_get(ht* table, const char* key) {
 
     // Loop till we find an empty entry.
     while (table->entries[index].key != NULL) {
-        if (strcmp(key, table->entries[index].key) == 0) {
+        if (table->entries[index].key != TOMBSTONE.key 
+            && strcmp(key, table->entries[index].key) == 0) {
             // Found key, return value.
             return table->entries[index].value;
         }
@@ -83,7 +88,8 @@ static const char* ht_set_entry(ht_entry* entries, size_t capacity,
 
     // Loop till we find an empty entry.
     while (entries[index].key != NULL) {
-        if (strcmp(key, entries[index].key) == 0) {
+        if (entries[index].key != TOMBSTONE.key 
+            && strcmp(key, entries[index].key) == 0) {
             // Found key (it already exists), update value.
             entries[index].value = value;
             return entries[index].key;
@@ -183,4 +189,26 @@ bool ht_next(hti* it) {
         }
     }
     return false;
+}
+
+void* ht_remove(ht* table, const char* key) {
+    uint64_t hash = hash_key(key);
+    size_t index = (size_t)(hash & (uint64_t)(table->capacity - 1));
+
+    while (table->entries[index].key != NULL) {
+        if (table->entries[index].key != TOMBSTONE.key &&
+            strcmp(key, table->entries[index].key) == 0) {
+            // Found it — free the key, save the value, plant tombstone
+            void* old_value = table->entries[index].value;
+            free((void*)table->entries[index].key);
+            table->entries[index].key   = TOMBSTONE.key;
+            table->entries[index].value = NULL;
+            table->length--;
+            return old_value;
+        }
+        index++;
+        if (index >= table->capacity) index = 0;
+    }
+
+    return NULL;  // key not found
 }

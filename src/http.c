@@ -17,6 +17,7 @@
 #include "process_data.h"
 #include "hash_table.h"
 #include "string_view.h"
+#include "state_machine.h"
 
 void free_http_response(
 	HTTPResponse *htr
@@ -384,9 +385,19 @@ int recv_body_chunks(
 ) {
 	int status;
 
-	// can have MAX_RETRIES here.
-	// but if last_byte_count == body_length after a loop and status == 1
-	// then we should break
+	// if we have a custom timer inside this 
+	// function that tracks how long the loop
+	// has been running, then we can exit after
+	// 50ms no matter what with the knowledge of 
+	// the fact that we continued to try to find
+	// the user data for 50 ms.
+	// BUT, that wastes cycles, but there is NO WAY 
+	// to tell the difference between a SOCKNONBLOCK 
+	// and RCVTIMEO.
+
+	// this function would return an error indicating:
+	// to save state in place and return the client_fd to
+	// the epoll waitlist for another worker to pickup.
 
 	for (;;) {
 		if (*body_length >= content_length) {
@@ -401,9 +412,15 @@ int recv_body_chunks(
 			&content_length
 		);
 
-		if (status == 1) continue;
+		printf("BODY LENGTH: %ld\n", *body_length);
+	
+		if (status == 1) {
+			// EAGAIN or EWOULDBLOCK
+			// return 1 up the chain?
+			return 1;
+		}
+
 		if (status == -1 || status == 2) {
-			printf("BODY LENGTH: %ld\n", *body_length);
 			if (*body_length == 0) {
 				return -1;
 			}
@@ -443,6 +460,8 @@ int handle_post_request(
 	char *body_start,
 	size_t body_length
 ) {
+	int rbc;
+
 	if (http_request->content_length >= MAX_CONTENT_LENGTH - CLIENT_BUF_SIZE - 1) {
 		return -1; // TODO: can start making custom error codes #define OVER_LIMIT 10 for preset error responses (in json or etc)
 	}
@@ -461,15 +480,20 @@ int handle_post_request(
 	// into the proper body container: http_request->body
 	memmove(http_request->body, body_start, body_length);
 
-	// could free headers here and have NULL check in free_http_request(...)?
-	// free(headers);
-
-	if (recv_body_chunks(
+	rbc = recv_body_chunks(
 		client_fd, 
 		http_request->body, 
 		(size_t) http_request->content_length, 
 		&body_length
-	) == -1) {
+	);
+
+	if (rbc == 1) {
+		// EAGAIN or EWOULDBLOCK
+		// send up chain
+		return 1;
+	}
+
+	if (rbc == -1) {
 		printfid("Failed to recieve body chunks", *tid);
 		return -1;
 	}
@@ -477,18 +501,63 @@ int handle_post_request(
 	return 0;
 }
 
+// state machine architecture
+int handle_request2(
+	int client_fd,
+	pid_t tid,
+	UserState *user_state
+) {
+	char *headers = xmalloc(CLIENT_BUF_SIZE), *body_start;
+	ssize_t recv_count = 0;
+	size_t bs_size, body_length;
+	int r, hpr;
+
+	us->http_request->method = xmalloc(REQ_METHOD_SIZE);
+	us->http_request->path = xmalloc(REQ_PATH_SIZE);
+	us->http_request->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
+
+	if (headers == NULL) {
+		printfid("Failed to allocate memory for headers", *tid);
+		return -1;
+	}
+
+	// so we have the user state
+	// Where the state is an INT that maps to an enum
+	// defined in state_machine.h (typedef enum {...} State)
+
+	while (user_state->state != FINISHED) {
+		switch (user_state->state) {
+			case HEADERS:
+				// do get headers
+				break;
+			case BODY:
+				break;
+			case RESPONSE:
+				break;
+			case FINISHED:
+				break;
+			default:
+				printfid("Failed to find state", tid);
+				break;
+		}
+	}
+}
+
 int handle_request(
 	int *client_fd,
 	pid_t *tid, 
-	HTTPRequest *http_request,
-	HTTPResponse *http_response
+	UserState *us
 ) {
 	// no +1 on CLIENT_BUF_SIZE because recv_header_chunks
 	// sets max recv amount to CLIENT_BUF_SIZE - 1
 	char *headers = xmalloc(CLIENT_BUF_SIZE), *body_start;
 	ssize_t recv_count = 0;
 	size_t bs_size, body_length;
-	int r;
+	int r, hpr;
+
+	us->http_request->method = xmalloc(REQ_METHOD_SIZE);
+	us->http_request->path = xmalloc(REQ_PATH_SIZE);
+	us->http_request->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
 
 	if (headers == NULL) {
 		printfid("Failed to allocate memory for headers", *tid);
@@ -509,26 +578,34 @@ int handle_request(
 	*body_start = '\0'; // add a null terminator for end of headers
 	body_start += 4; // move past \0\n\r\n to start of body content
 
-	http_request->header_storage = headers;
+	us->http_request->header_storage = headers;
 	if (find_headers(http_request) == 0) {
 		return -1;
 	}
 
-	if (strcmp(http_request->method, "POST") == 0) {
-		if (handle_post_request(
+	if (strcmp(us->http_request->method, "POST") == 0) {
+		hpr = handle_post_request(
 			client_fd, 
 			tid, 
 			http_request, 
 			body_start, 
 			body_length
-		) < 0) {
+		);
+
+		if (hpr == 1) {
+			// EAGAIN or EWOULDBLOCK
+			// send upchain :()
+			return 1;
+		}
+
+		if (hpr < 0) {
 			printfid("Failed to handle POST request", *tid);
 			return -1;
 		}
 
 		send_json_response(
 			client_fd, 
-			http_response->status, 
+			us->http_response->status, 
 			"{"
 				"\"success\": true,"
 				"\"message\": \"We recieved your data!\""
@@ -538,13 +615,13 @@ int handle_request(
 		return 0;
 	}
 
-	if (strcmp(http_request->method, "GET") == 0) {
+	if (strcmp(us->http_request->method, "GET") == 0) {
 
 		if (handle_get_request(
 			client_fd, 
 			tid, 
-			http_request, 
-			http_response
+			us->http_request, 
+			us->http_response
 		) < 0) {
 			printfid("Failed to handle GET request", *tid);
 			return -1;
@@ -559,29 +636,11 @@ int handle_request(
 	return -1;
 }
 
-/*
-int handle_request_failure(
-	HTTPRequest *http_request,
-	HTTPResponse *http_response
-) {
-
-	// use status and method
-
-	if (strcmp(http_request->method, "GET") == 0) {
-
-		// handle get request failure
-		printf("")
-	}
-
-}
-*/
-
 void *http_worker(
 	void *data
 ) {
 	struct process_data *wd = data;
-	HTTPRequest http_request = {0};
-	HTTPResponse http_response = {0};
+
 	struct sockaddr_storage peer_addr = {0};
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	socklen_t peer_addrlen = sizeof(struct sockaddr_storage);
@@ -633,30 +692,62 @@ void *http_worker(
 			} else {
 
 				// client is ready
-
+				
+				/*
+					Should every user just get a UserState,
+					rather than just allocating httprequest/response
+					and then writing a bunch of extra boilerplate,
+					->state could hold the state and handle_request
+					could have if statements for each state, or use enum
+					map, whatever
+				*/
+				
 				fd = events[n].data.fd;
 
+				// create a new user state for new client.
+				UserState us = {0};
+
+				// get information from hash table if available (state)
+				if (data->user_states[fd]) {
+					us = ht_get(&fd);
+					
+					// TODO: remove from the table
+					ht_remove(table, fd);
+				} else {
+					us = nus(fd); // create new struct
+				}
+
+				/*
 				memset(&http_request, 0, sizeof(http_request));
 				memset(&http_response, 0, sizeof(http_response));
-				http_response.status = 200;
+				*/
+				http_response->status = 200;
 
 				ps_cap(&speed.start);
 				
-				hr_result = handle_request(&fd, &tid, &http_request, &http_response);
-				if (hr_result < 0) {
+				hr_result = handle_request(&fd, &tid, &us);
+				if (hr_result != 0) {
 					// have different types of errors to respond about, based on
 					// method as well, error for GET could be 404 page
 					// something like handle_request_failure(...)
 
+					#define RETRY_ERROR 1
+					if (hr_result == RETRY_ERROR) {
+						// create a new UserState and attach the HTTPRequest and HTTPResponse struct(s).
+						// return the fd to the epoll waitlist (and reenable) with MOD
+						printfid("Retry Error", tid);
+						continue;
+					}
+
 					// TODO: remove line below after setting 
 					// status where required throughout program
-					http_response.status = 500;
+					http_response->status = 500;
 
 					// handle_request_failure(&http_request, &http_response);
 
 					send_json_response(
 						&fd, 
-						http_response.status, 
+						http_response->status, 
 						"{"
 							"\"error\": \"Failed to handle request\","
 							"\"success\": false"
@@ -667,8 +758,8 @@ void *http_worker(
 				ps_cap(&speed.end);
 				ps_print_elapsed(&speed, tid_p);
 
-				free_http_request(&http_request);
-				free_http_response(&http_response);
+				free_http_request(&us->http_request);
+				free_http_response(&us->http_response);
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);
 			}

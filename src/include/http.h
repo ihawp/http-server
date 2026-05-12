@@ -26,9 +26,11 @@ typedef struct {
 	char *header_storage;
 	char *body;
 	long content_length;
-	char method[REQ_METHOD_SIZE];
-	char path[REQ_PATH_SIZE];
-	char http_version[REQ_HTTP_VERSION_SIZE];
+
+	// allocate on heap with malloc()
+	char *method; // REQ_METHOD_SIZE
+	char *path; // REQ_PATH_SIZE
+	char *http_version; // REQ_HTTP_VERSION_SIZE
 } HTTPRequest;
 
 typedef struct {

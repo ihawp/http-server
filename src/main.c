@@ -16,7 +16,7 @@ int main(
 	pthread_t workers[MAX_WORKERS];
 	pthread_t *wp = workers;
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
-	struct process_data data = {0};
+	struct process_data data = {0}; // holds hash table for user state
 
 	if (argc < 2) {
 		printf(
@@ -62,5 +62,22 @@ int main(
 		pthread_create(&workers[i], NULL, (void*) http_worker, &data);
 	}
 
-	pause();
+	data.user_states = ht_create();
+
+	// run a loop that checks for expired hash table entries
+	// instead of using pause()
+	for (;;) {
+		for (i = 0; i < data.user_states->capacity; i++) {
+			if (data.user_states->entries[i].key != NULL) {
+				char *got_val = ht_get(data.user_states, data.user_states->entries[i].key);
+				printfid("GOT VAL: %s", data.pid, got_val);
+
+				if (1 /* expired */) {
+					// delete from hashtable
+					// delete from epoll watchlist
+					// free memory
+				}
+			}
+		}
+	}
 }
