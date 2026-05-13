@@ -1,12 +1,14 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include <sys/epoll.h>
+#include <signal.h>
 
 #include "http.h"
 #include "helpers.h"
 #include "tcp_server.h"
 #include "process_data.h"
 #include "state_machine.h"
+#include "graceful_shutdown.h"
 
 int main(
 	int argc,
@@ -18,7 +20,9 @@ int main(
 	pthread_t *wp = workers;
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	struct process_data data = {0}; // holds hash table for user state
-	UserState *us;
+	struct timespec ts;
+
+	signal(SIGINT, handle_sigint);
 
 	if (argc < 2) {
 		printf(
@@ -57,6 +61,8 @@ int main(
 
 	data.epc = epc;
 	data.sfd = sfd;
+	data.user_states = ht_create();
+
 	pthread_mutex_init(&data.lock, NULL);
     pthread_cond_init(&data.ready, NULL);
 
@@ -64,32 +70,39 @@ int main(
 		pthread_create(&workers[i], NULL, (void*) http_worker, &data);
 	}
 
-	data.user_states = ht_create();
-
 	// remove expired clients (passed/at deadline)
 	for (;;) {
 		// collect expired, unlocked keys
-		ht_key expired[50];
-		size_t n = 0;
-
 		hti it = ht_iterator(data.user_states);
 		while (ht_next(&it)) {
-			us = it.value;
-			pthread_mutex_lock(&us->mutex);
-			bool is_expired = !us->lock && time(NULL) >= us->deadline;
-			pthread_mutex_unlock(&us->mutex);
+			UserState *us = it.value;
 
-			if (is_expired) {
-				expired[n++] = it.key;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			int64_t now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000; // ms
+
+			bool is_expired = now >= us->deadline;
+			bool over_retry = us->retries >= 3;
+
+			if (is_expired || over_retry) {
+				printfid("IS EXPIRED: %d\tOVER RETRY: %d", data.pid, is_expired, over_retry);
+				printfid("REMOVE CLIENT_FD: %d", data.pid, us->client_fd);
+				ht_remove(data.user_states, it.key);
+				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+
+				us->http_response->status = 500;
+				send_json_response(
+					&us->client_fd, 
+					us->http_response->status, 
+					"{"
+						"\"error\": \"Failed to handle request\","
+						"\"success\": false"
+					"}"
+				);
+
+				close(us->client_fd);
+				free_user_state(us);
 			}
 		}
 
-		// then remove them
-		for (size_t i = 0; i < n; i++) {
-			ht_remove(data.user_states, expired[i]);
-			// remove from epoll waitlist too.
-		}
-
-		sleep(1);
 	}
 }

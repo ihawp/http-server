@@ -20,32 +20,6 @@
 #include "state_machine.h"
 #include "http_struct.h"
 
-void free_http_response(
-	HTTPResponse *htr
-) {
-	htr->status = 0;
-}
-
-void free_http_request(
-	HTTPRequest *hrq
-) {
-	// can be null when requests do not go past recv_header_chunks
-	if (hrq->headers != NULL) {
-		ht_destroy(hrq->headers);
-	}
-
-	if (hrq->body != NULL) {
-		memset(hrq->body, 0, hrq->content_length);
-		free(hrq->body);
-	}
-
-	free(hrq->header_storage);
-	hrq->content_length = 0;
-	memset(hrq->method, 0, REQ_METHOD_SIZE);
-	memset(hrq->path, 0, REQ_PATH_SIZE);
-	memset(hrq->http_version, 0, REQ_HTTP_VERSION_SIZE);
-}
-
 char *file_to_content_type(
 	char *path
 ) {
@@ -386,20 +360,6 @@ int recv_body_chunks(
 ) {
 	int status;
 
-	// if we have a custom timer inside this 
-	// function that tracks how long the loop
-	// has been running, then we can exit after
-	// 50ms no matter what with the knowledge of 
-	// the fact that we continued to try to find
-	// the user data for 50 ms.
-	// BUT, that wastes cycles, but there is NO WAY 
-	// to tell the difference between a SOCKNONBLOCK 
-	// and RCVTIMEO.
-
-	// this function would return an error indicating:
-	// to save state in place and return the client_fd to
-	// the epoll waitlist for another worker to pickup.
-
 	for (;;) {
 		if (*body_length >= content_length) {
 			break;
@@ -415,9 +375,8 @@ int recv_body_chunks(
 
 		printf("BODY LENGTH: %ld\n", *body_length);
 	
+		// EAGAIN or EWOULDBLOCK (RETRY_ERROR)
 		if (status == 1) {
-			// EAGAIN or EWOULDBLOCK
-			// return 1 up the chain?
 			return 1;
 		}
 
@@ -502,7 +461,6 @@ int recv_body(
 	return 0;
 }
 
-// state machine architecture
 int handle_request(
 	int client_fd,
 	pid_t tid,
@@ -545,10 +503,13 @@ int handle_request(
 				body_start += 4; // move past \0\n\r\n to start of body content
 
 				user_state->http_request->header_storage = headers;
-				if (find_headers(user_state->http_request) == 0) return -1;
+
+				if (find_headers(user_state->http_request) == 0) {
+					return -1;
+				}
 
 				user_state->state = BODY;
-				
+
 				if (strcmp(user_state->http_request->method, "GET") == 0) {
 					user_state->state = GET;
 				}
@@ -567,7 +528,7 @@ int handle_request(
 				break;
 			case BODY:
 
-				if (user_state->retries == 3) {
+				if (user_state->retries >= 3) {
 					printfid("Too many retries for client: %d", tid, client_fd);
 					return -1;
 				}
@@ -636,12 +597,17 @@ void *http_worker(
 
 	for (;;) {
 		epoll_result = epoll_wait(wd->epc, events, MAX_EVENTS, -1);
-		if (epoll_result == -1) continue;
+		if (epoll_result < 0) continue;
+
+		printfid("EPOLL RESULT: %d", tid, epoll_result);
 
 		for (n = 0; n < epoll_result; ++n) {
 			if (events[n].data.fd == wd->sfd) {
 
-				// new client
+				printfid("Trying to accept", tid);
+
+				// new client, can add worker for just accepting clients
+				// and adding them to the epoll waitlist, void *accept_worker()
 				
 				client_fd = accept(
 					wd->sfd, 
@@ -660,6 +626,7 @@ void *http_worker(
 
 				ev.data.fd = client_fd;
 				ectl = epoll_ctl(wd->epc, EPOLL_CTL_ADD, client_fd, &ev);
+				printfid("ADD CLIENT_FD: %d", tid, client_fd);
 				
 				if (errno == EEXIST) {
 					printfid("EEXIST", tid);
@@ -670,24 +637,28 @@ void *http_worker(
 					exit(EXIT_FAILURE);
 				}
 			} else {
-
 				// data ready
 
-				fd = events[n].data.fd;
 				UserState *us;
+
+				fd = events[n].data.fd;
+				printfid("FD: %d", tid, fd);
 
 				// get information from hash table if available (state)
 				us = ht_get(wd->user_states, HT_INT(fd));
-				if (us != NULL) {
-					us->retries++;
-					ht_remove(wd->user_states, HT_INT(fd));
-				} else {
+
+				if (us == NULL) {
+					printfid("CREATING NEW UserState, FD: %d", tid, fd);
 					us = nus(fd);
 				}
 
-				// if still NULL close connection with client (below)
+				// `us` could be NULL because nus could fail to xmalloc(...)
 				if (us != NULL) {
+
+					pthread_mutex_lock(&us->mutex);
+					us->retries++;
 					us->http_response->status = 200;
+					pthread_mutex_unlock(&us->mutex);
 
 					ps_cap(&speed.start);
 					
@@ -697,18 +668,24 @@ void *http_worker(
 						// method as well, error for GET could be 404 page
 						// something like handle_request_failure(...)
 
-						#define RETRY_ERROR 1
+						
 						if (hr_result == RETRY_ERROR) {
-							// return the fd to the epoll waitlist (and reenable) with MOD
-							printfid("Retry Error", tid);
+
+							ht_set(wd->user_states, HT_INT(fd), us);
+
+							// reenable the client_fd
+							ev.data.fd = fd;
+							epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
+							
+							printfid("RETRY CLIENT_FD: %d", tid, fd);
 							continue;
 						}
 
 						// TODO: remove line below after setting 
 						// status where required throughout program
+						pthread_mutex_lock(&us->mutex);
 						us->http_response->status = 500;
-
-						// handle_request_failure(&http_request, &http_response);
+						pthread_mutex_unlock(&us->mutex);
 
 						send_json_response(
 							&fd, 
@@ -722,10 +699,26 @@ void *http_worker(
 
 					ps_cap(&speed.end);
 					ps_print_elapsed(&speed, tid_p);
+					free_user_state(us);
 				}
 
+				printfid("DELETING: %d", tid, fd);
+
+				// returns NULL if unable to delete
+				ht_remove(wd->user_states, HT_INT(fd));
+				
+				// this HAS to be skipped if the user has hit the RETRY_ERROR
 				// if still NULL close connection with client (below)
-				free_user_state(us);
+				
+				// seems to be skipped with continue...
+				// its more just that the item would need to be cleaned up from the 
+				// user_states *ht in wd (worker data) if we reach here (because
+				// the request was actually slow and the user sent their data successfully)
+				// since we don't want the (worker/main) thread to try cleaning
+				// up the data later on.
+				// but there is no guarantee that it is a 
+				// part of this hash table.
+
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);
 			}

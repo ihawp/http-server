@@ -1,7 +1,6 @@
 #pragma once
 
 #include <stdio.h>
-#include <time.h>
 #include <pthread.h>
 #include "http_struct.h"
 
@@ -12,12 +11,11 @@
 typedef struct {
     int retries;
     int client_fd;
-    int lock; // client_fd is in use (request being processed)
     int state; // might not need state if we are only using for the one case
-    time_t deadline;
+    int64_t deadline;
     HTTPRequest *http_request;
     HTTPResponse *http_response;
-    pthread_mutex_t mutex;
+    pthread_mutex_t mutex; // lock
 } UserState;
 
 typedef enum {
@@ -33,6 +31,6 @@ UserState *nus(
     int client_fd
 );
 
-int free_user_state(
+void free_user_state(
     UserState *user_state
 );

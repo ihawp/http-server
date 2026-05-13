@@ -13,15 +13,16 @@
 #define MAX_EVENTS 10
 #define MAX_WORKERS 3
 #define HEADER_SIZE 256
-#define REQ_METHOD_SIZE 16
-#define REQ_PATH_SIZE 256
-#define REQ_HTTP_VERSION_SIZE 24
 #define MAX_CONTENT_LENGTH 8000
 #define CLIENT_BUF_SIZE 1024
 #define CHUNK_SIZE 512
 #define RESPONSE_BUF_SIZE 512
 #define PATH_SIZE 512
 #define CHAR_SIZE sizeof(char)
+
+typedef enum {
+	RETRY_ERROR = 1
+} Errors;
 
 void free_http_request(
 	HTTPRequest *hrq

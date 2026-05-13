@@ -5,6 +5,10 @@
 #include <string.h>
 #include "hash_table.h"
 
+#define REQ_METHOD_SIZE 16
+#define REQ_PATH_SIZE 256
+#define REQ_HTTP_VERSION_SIZE 24
+
 typedef struct {
 	ht *headers;
 	char *header_storage;
@@ -20,3 +24,11 @@ typedef struct {
 typedef struct {
 	int status;
 } HTTPResponse;
+
+void free_http_response(
+	HTTPResponse *htr
+);
+
+void free_http_request(
+	HTTPRequest *hrq
+);
