@@ -85,6 +85,15 @@ char *recv_header_chunks(
 	ssize_t *recv_count
 );
 
+int recv_header(
+	char **body_start,
+	char *headers,
+	int client_fd,
+	size_t *bs_size,
+	ssize_t *recv_count,
+	size_t *body_length
+);
+
 // TODO: post requests get stuck
 int recv_body_chunks(
 	int *client_fd,

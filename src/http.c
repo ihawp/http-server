@@ -305,6 +305,7 @@ int find_headers(
 
 				if (strcmp(keybuffer, "Content-Length") == 0) {
 					http_request->content_length = strtol(valuebuffer, NULL, 10);
+					printf("CONTENT-LENGTH: %ld\n", http_request->content_length);
 				}
 
 				ht_set(http_request->headers, HT_STR(keybuffer), valuebuffer);
@@ -317,6 +318,8 @@ int find_headers(
 	return http_request->headers->length;
 }
 
+// needs to return pointer to the start of the body
+// but also needs to return 1 if EAGAIN
 char *recv_header_chunks(
 	int *client_fd,
 	char *buffer,
@@ -339,7 +342,8 @@ char *recv_header_chunks(
 		}
 		
 		if (status == 1) {
-			continue;
+			// EAGAIN or EWOULDBLOCK
+			return NULL;
 		}
 		
 		mmp = memmem(buffer, *recv_count, "\r\n\r\n", 4);
@@ -350,6 +354,36 @@ char *recv_header_chunks(
 	}
 
 	return NULL;
+}
+
+int recv_header(
+	char **body_start,
+	char *headers,
+	int client_fd,
+	size_t *bs_size,
+	ssize_t *recv_count,
+	size_t *body_length
+) {
+	// do get headers
+	errno = 0;
+	*body_start = recv_header_chunks(&client_fd, headers, recv_count);
+	
+	if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		return 1;
+	}
+
+	if (body_start == NULL) {
+		return -1;
+	}
+
+	// ths bs_size tells us how many characters the actual headers are
+	// the recv_count - bs_size = the length of body
+	// already added, which will be used as the 3rd parameter of memmove
+	*bs_size = *body_start - headers;
+	*body_length = *recv_count - *bs_size - 4; // remove 4 for \r\n\r\n
+	**body_start = '\0'; // add a null terminator for end of headers
+	*body_start += 4; // move past \0\n\r\n to start of body content
+	return 0;
 }
 
 int recv_body_chunks(
@@ -422,7 +456,7 @@ int recv_body(
 ) {
 	int rbc;
 
-	if (http_request->content_length >= MAX_CONTENT_LENGTH - CLIENT_BUF_SIZE - 1) {
+	if (http_request->content_length >= MAX_CONTENT_LENGTH - CLIENT_BUF_SIZE) {
 		return -1; // TODO: can start making custom error codes #define OVER_LIMIT 10 for preset error responses (in json or etc)
 	}
 
@@ -430,13 +464,25 @@ int recv_body(
 		printfid("Whole body found", *tid);
 	}
 
+	printf("CONTENT-LENGTH: %ld\n", http_request->content_length);
+
+	// stops program crash when content length is omitted, like:
+	// "Content-Length: "
+	// memmove causes crash since it will assume that the http_request->body
+	// has enough memory to store all octets from body_start -> body_start + body_length
+	if (http_request->content_length <= body_length) {
+		return -1;
+	}
+
+	printfid("BODY LENGTH: %ld\tCONTENT LENGTH: %d", *tid, body_length, http_request->content_length);
+
 	http_request->body = xmalloc(http_request->content_length + 1);
 	if (http_request->body == NULL) {
 		printfid("Failed to allocated memory for body", *tid);
 		return -1;
 	}
 
-	// move the originally (potentially) captured body content
+ 	// move the originally (potentially) captured body content
 	// into the proper body container: http_request->body
 	memmove(http_request->body, body_start, body_length);
 
@@ -480,38 +526,42 @@ int handle_request(
 		return -1;
 	}
 
-	// so we have the user state
-	// Where the state is an INT that maps to an enum
-	// defined in state_machine.h (typedef enum {...} State)
+	if (user_state->retries >= 3) {
+		printfid("Too many retries for client: %d", tid, client_fd);
+		return -1;
+	}
 
 	while (user_state->state != FIN) {
 		switch (user_state->state) {
 			case HEADERS:
-				// do get headers
-				body_start = recv_header_chunks(&client_fd, headers, &recv_count);
-				if (body_start == NULL) {
-					printfid("Failed to receive header chunks", tid);
+
+				int rh = recv_header(
+					&body_start,
+					headers,
+					client_fd,
+					&bs_size,
+					&recv_count,
+					&body_length
+				);
+
+				if (rh == 1) {
+					// EAGAIN or EWOULDBLOCK
+					return 1;
+				}
+				if (rh < 0) {
 					return -1;
 				}
 
-				// ths bs_size tells us how many characters the actual headers are
-				// the recv_count - bs_size = the length of body
-				// already added, which will be used as the 3rd parameter of memmove
-				bs_size = body_start - headers;
-				body_length = recv_count - bs_size - 4; // remove 4 for \r\n\r\n
-				*body_start = '\0'; // add a null terminator for end of headers
-				body_start += 4; // move past \0\n\r\n to start of body content
-
 				user_state->http_request->header_storage = headers;
+				user_state->state = BODY;
 
 				if (find_headers(user_state->http_request) == 0) {
 					return -1;
 				}
 
-				user_state->state = BODY;
-
 				if (strcmp(user_state->http_request->method, "GET") == 0) {
 					user_state->state = GET;
+					break;
 				}
 
 				break;
@@ -527,12 +577,6 @@ int handle_request(
 				}
 				break;
 			case BODY:
-
-				if (user_state->retries >= 3) {
-					printfid("Too many retries for client: %d", tid, client_fd);
-					return -1;
-				}
-
 				hpr = recv_body(
 					&client_fd, 
 					&tid, 
@@ -541,8 +585,10 @@ int handle_request(
 					body_length
 				);
 
-				// EAGAIN or EWOULDBLOCK
-				if (hpr == 1) return 1;
+				if (hpr == 1) {
+					// EAGAIN or EWOULDBLOCK
+					return 1;
+				}
 				if (hpr < 0) {
 					printfid("Failed to handle POST request", tid);
 					return -1;
@@ -599,12 +645,29 @@ void *http_worker(
 		epoll_result = epoll_wait(wd->epc, events, MAX_EVENTS, -1);
 		if (epoll_result < 0) continue;
 
-		printfid("EPOLL RESULT: %d", tid, epoll_result);
+		// When I make a POST request, two workers are being woken up
+		// EPOLLEXCLUSIVE doesn't guarantee that it will solve all race
+		// conditions, but the issue is that the first worker does
+		// not immediatley drain the data after accept(...)ing
+		// Anywho, its besides the issue at this point, I need to know,
+		// why the loop is NOT looping. Expiration is the only thing
+		// ending BAD requests. (no reason to believe that the second
+		// worker is affecting the ability to loop)...the whole point
+		// is that any worker could pick up the client after it has
+		// been accepted...which is why there should be a accept loop
+		// and then this worker function will just do the job of running
+		// handle_request(...) and the accompanying functions, rather than
+		// trying to do both.
 
+		// There could be 5 total threads.
+		// 2 worker threads,
+		// 2 accept threads,
+		// 1 delete thread(s)
+		// and main could still be paused, 
+		// or take on the delete thread role
+		
 		for (n = 0; n < epoll_result; ++n) {
 			if (events[n].data.fd == wd->sfd) {
-
-				printfid("Trying to accept", tid);
 
 				// new client, can add worker for just accepting clients
 				// and adding them to the epoll waitlist, void *accept_worker()
@@ -619,6 +682,10 @@ void *http_worker(
 					printfid("client_fd", tid);
 					continue;
 				}
+
+				printf("----------------------------------\n");
+				printfid("CLIENT ACCEPTED: %d", tid, client_fd);
+				printfid("EPOLL RESULT: %d", tid, epoll_result);
 
 				if (setnonblocking(client_fd) == -1) {
 					printfid("blocking", tid);
@@ -655,37 +722,41 @@ void *http_worker(
 				// `us` could be NULL because nus could fail to xmalloc(...)
 				if (us != NULL) {
 
-					pthread_mutex_lock(&us->mutex);
-					us->retries++;
 					us->http_response->status = 200;
-					pthread_mutex_unlock(&us->mutex);
 
 					ps_cap(&speed.start);
 					
 					hr_result = handle_request(fd, tid, us);
+					if (hr_result == RETRY_ERROR) {
+
+						us->retries++;
+
+						ht_set(wd->user_states, HT_INT(fd), us);
+
+						// reenable the client_fd
+						ev.data.fd = fd;
+
+						// this should be reenabling the FD
+						// so that it can be found again for this
+						// } else { part of the loop.
+						// where fd is already in waitlist, and new
+						// data is ready
+
+						// returns 0 and so the fd should be back in the waitlist,
+						// but the timeout is running out first (at 5 SECONDS!?).
+						// So something is wrong.
+						int f = epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
+						printfid("epoll_ctl MOD RESULT: %d", tid, f);
+
+						// This should be printed thrice
+						printfid("RETRY CLIENT_FD: %d", tid, fd);
+						continue;
+					}
+
 					if (hr_result != 0) {
-						// have different types of errors to respond about, based on
-						// method as well, error for GET could be 404 page
-						// something like handle_request_failure(...)
-
-						
-						if (hr_result == RETRY_ERROR) {
-
-							ht_set(wd->user_states, HT_INT(fd), us);
-
-							// reenable the client_fd
-							ev.data.fd = fd;
-							epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
-							
-							printfid("RETRY CLIENT_FD: %d", tid, fd);
-							continue;
-						}
-
 						// TODO: remove line below after setting 
 						// status where required throughout program
-						pthread_mutex_lock(&us->mutex);
 						us->http_response->status = 500;
-						pthread_mutex_unlock(&us->mutex);
 
 						send_json_response(
 							&fd, 
@@ -695,6 +766,8 @@ void *http_worker(
 								"\"success\": false"
 							"}"
 						);
+
+						continue;
 					}
 
 					ps_cap(&speed.end);
@@ -706,19 +779,6 @@ void *http_worker(
 
 				// returns NULL if unable to delete
 				ht_remove(wd->user_states, HT_INT(fd));
-				
-				// this HAS to be skipped if the user has hit the RETRY_ERROR
-				// if still NULL close connection with client (below)
-				
-				// seems to be skipped with continue...
-				// its more just that the item would need to be cleaned up from the 
-				// user_states *ht in wd (worker data) if we reach here (because
-				// the request was actually slow and the user sent their data successfully)
-				// since we don't want the (worker/main) thread to try cleaning
-				// up the data later on.
-				// but there is no guarantee that it is a 
-				// part of this hash table.
-
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);
 			}

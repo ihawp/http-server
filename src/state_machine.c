@@ -49,6 +49,8 @@ void free_user_state(
     user_state->state = 0;
     user_state->deadline = time(NULL);
 
+    printf("USER STATE FREED\n");
+
     if (user_state->http_request != NULL) {
         free_http_request(user_state->http_request);
     }
