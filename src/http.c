@@ -705,6 +705,7 @@ void *http_worker(
 					free_user_state(us);
 				}
 
+				// move ht_remove inside above if?
 				ht_remove(wd->user_states, HT_INT(fd));
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);

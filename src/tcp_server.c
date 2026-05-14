@@ -109,7 +109,6 @@ int recv_chunks(
 
 	if (recv_count < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			printf("EAGAIN or EWOULDBLOCK\n");
 			return 1;
 		}
 		
