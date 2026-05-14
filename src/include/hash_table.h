@@ -3,60 +3,81 @@
 
 #pragma once
 
-#define _HT_H
-
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
-// Hash table structure: create with ht_create, free with ht_destroy.
+// ---------------------------------------------------------------------------
+// Key type
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    enum { HT_KEY_STR, HT_KEY_INT } type;
+    union {
+        const char* str;
+        intptr_t    i;
+    };
+} ht_key;
+
+// Convenience macros for constructing keys.
+#define HT_STR(s) ((ht_key){ .type = HT_KEY_STR, .str = (s) })
+#define HT_INT(n) ((ht_key){ .type = HT_KEY_INT, .i   = (n) })
+
+// ---------------------------------------------------------------------------
+// Hash table
+// ---------------------------------------------------------------------------
+
 typedef struct ht ht;
 
-// Hash table entry (slot may be filled or empty).
 typedef struct {
-    const char* key;  // key is NULL if this slot is empty
-    void* value;
+    ht_key key;
+    void*  value;  // NULL if slot is empty or a tombstone
 } ht_entry;
 
-// Hash table structure: create with ht_create, free with ht_destroy.
 struct ht {
-    ht_entry* entries;  // hash slots
-    size_t capacity;    // size of _entries array
-    size_t length;      // number of items in hash table
+    ht_entry* entries;
+    size_t    capacity;
+    size_t    length;
 };
 
 // Create hash table and return pointer to it, or NULL if out of memory.
 ht* ht_create(void);
 
-// Free memory allocated for hash table, including allocated keys.
+// Free memory allocated for hash table, including allocated string keys.
 void ht_destroy(ht* table);
 
-// Get item with given key (NUL-terminated) from hash table. Return
-// value (which was set with ht_set), or NULL if key not found.
-void* ht_get(ht* table, const char* key);
+// Get item with given key. Returns value or NULL if not found.
+void* ht_get(ht* table, ht_key key);
 
-// Set item with given key (NUL-terminated) to value (which must not
-// be NULL). If not already present in table, key is copied to newly
-// allocated memory (keys are freed automatically when ht_destroy is
-// called). Return address of copied key, or NULL if out of memory.
-const char* ht_set(ht* table, const char* key, void* value);
+// Set item with given key. Value must not be NULL.
+// For string keys, the key is copied into the table.
+// Returns the stored key on success, or a key with a NULL str if out of memory.
+ht_key ht_set(ht* table, ht_key key, void* value);
 
-// Return number of items in hash table.
+// Remove item with given key.
+// Returns old value on success, NULL if not found.
+void* ht_remove(ht* table, ht_key key);
+
+// Return number of live items in hash table.
 size_t ht_length(ht* table);
 
-// Hash table iterator: create with ht_iterator, iterate with ht_next.
+// ---------------------------------------------------------------------------
+// Iterator
+// ---------------------------------------------------------------------------
+
 typedef struct {
-    const char* key;  // current key
-    void* value;      // current value
+    ht_key key;    // current key
+    void*  value;  // current value
 
     // Don't use these fields directly.
-    ht* _table;       // reference to hash table being iterated
-    size_t _index;    // current index into ht._entries
+    ht*    _table;
+    size_t _index;
 } hti;
 
 // Return new hash table iterator (for use with ht_next).
 hti ht_iterator(ht* table);
 
-// Move iterator to next item in hash table, update iterator's key
-// and value to current item, and return true. If there are no more
-// items, return false. Don't call ht_set during iteration.
+// Advance iterator to the next item, updating key and value.
+// Returns true if an item was found, false when iteration is complete.
+// Do not call ht_set or ht_remove during iteration.
 bool ht_next(hti* it);

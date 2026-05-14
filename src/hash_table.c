@@ -8,43 +8,26 @@
 
 #include "hash_table.h"
 
-#define INITIAL_CAPACITY 16  // must not be zero
+#define INITIAL_CAPACITY 16
 
-ht* ht_create(void) {
-    // Allocate space for hash table struct.
-    ht* table = malloc(sizeof(ht));
-    if (table == NULL) {
-        return NULL;
-    }
-    table->length = 0;
-    table->capacity = INITIAL_CAPACITY;
+// Tombstone sentinel: a key whose str pointer is this private address.
+static char   _tombstone_buf[] = "";
+static ht_key TOMBSTONE        = { .type = HT_KEY_STR,
+                                   .str  = (const char*)&_tombstone_buf };
 
-    // Allocate (zero'd) space for entry buckets.
-    table->entries = calloc(table->capacity, sizeof(ht_entry));
-    if (table->entries == NULL) {
-        free(table); // error, free table before we return!
-        return NULL;
-    }
-    return table;
-}
+#define IS_TOMBSTONE(e) \
+    ((e).key.type == HT_KEY_STR && (e).key.str == TOMBSTONE.str)
+#define IS_EMPTY(e) \
+    ((e).key.type == HT_KEY_STR && (e).key.str == NULL)
 
-void ht_destroy(ht* table) {
-    // First free allocated keys.
-    for (size_t i = 0; i < table->capacity; i++) {
-        free((void*)table->entries[i].key);
-    }
-
-    // Then free entries array and table itself.
-    free(table->entries);
-    free(table);
-}
+// ---------------------------------------------------------------------------
+// Hash functions (both private)
+// ---------------------------------------------------------------------------
 
 #define FNV_OFFSET 14695981039346656037UL
-#define FNV_PRIME 1099511628211UL
+#define FNV_PRIME  1099511628211UL
 
-// Return 64-bit FNV-1a hash for key (NUL-terminated). See description:
-// https://en.wikipedia.org/wiki/Fowler–Noll–Vo_hash_function
-static uint64_t hash_key(const char* key) {
+static uint64_t hash_str(const char* key) {
     uint64_t hash = FNV_OFFSET;
     for (const char* p = key; *p; p++) {
         hash ^= (uint64_t)(unsigned char)(*p);
@@ -53,132 +36,191 @@ static uint64_t hash_key(const char* key) {
     return hash;
 }
 
-void* ht_get(ht* table, const char* key) {
-    // AND hash with capacity-1 to ensure it's within entries array.
-    uint64_t hash = hash_key(key);
-    size_t index = (size_t)(hash & (uint64_t)(table->capacity - 1));
-
-    // Loop till we find an empty entry.
-    while (table->entries[index].key != NULL) {
-        if (strcmp(key, table->entries[index].key) == 0) {
-            // Found key, return value.
-            return table->entries[index].value;
-        }
-        // Key wasn't in this slot, move to next (linear probing).
-        index++;
-        if (index >= table->capacity) {
-            // At end of entries array, wrap around.
-            index = 0;
-        }
-    }
-    return NULL;
+static uint64_t hash_int(intptr_t key) {
+    uint64_t x = (uint64_t)key;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9UL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebUL;
+    return x ^ (x >> 31);
 }
 
-// Internal function to set an entry (without expanding table).
-static const char* ht_set_entry(ht_entry* entries, size_t capacity,
-        const char* key, void* value, size_t* plength) {
-    // AND hash with capacity-1 to ensure it's within entries array.
-    uint64_t hash = hash_key(key);
-    size_t index = (size_t)(hash & (uint64_t)(capacity - 1));
-
-    // Loop till we find an empty entry.
-    while (entries[index].key != NULL) {
-        if (strcmp(key, entries[index].key) == 0) {
-            // Found key (it already exists), update value.
-            entries[index].value = value;
-            return entries[index].key;
-        }
-        // Key wasn't in this slot, move to next (linear probing).
-        index++;
-        if (index >= capacity) {
-            // At end of entries array, wrap around.
-            index = 0;
-        }
-    }
-
-    // Didn't find key, allocate+copy if needed, then insert it.
-    if (plength != NULL) {
-        key = strdup(key);
-        if (key == NULL) {
-            return NULL;
-        }
-        (*plength)++;
-    }
-    entries[index].key = (char*)key;
-    entries[index].value = value;
-    return key;
+static uint64_t hash_key(ht_key key) {
+    return key.type == HT_KEY_STR ? hash_str(key.str) : hash_int(key.i);
 }
 
-// Expand hash table to twice its current size. Return true on success,
-// false if out of memory.
+// ---------------------------------------------------------------------------
+// Key equality
+// ---------------------------------------------------------------------------
+
+static bool key_equal(ht_key a, ht_key b) {
+    if (a.type != b.type) return false;
+    if (a.type == HT_KEY_STR) return strcmp(a.str, b.str) == 0;
+    return a.i == b.i;
+}
+
+// ---------------------------------------------------------------------------
+// Create / destroy
+// ---------------------------------------------------------------------------
+
+ht* ht_create(void) {
+    ht* table = malloc(sizeof(ht));
+    if (table == NULL) return NULL;
+
+    table->length   = 0;
+    table->capacity = INITIAL_CAPACITY;
+    table->entries  = calloc(table->capacity, sizeof(ht_entry));
+    if (table->entries == NULL) {
+        free(table);
+        return NULL;
+    }
+    return table;
+}
+
+void ht_destroy(ht* table) {
+    for (size_t i = 0; i < table->capacity; i++) {
+        ht_entry* e = &table->entries[i];
+        if (!IS_EMPTY(*e) && !IS_TOMBSTONE(*e) && e->key.type == HT_KEY_STR) {
+            free((void*)e->key.str);
+        }
+    }
+    free(table->entries);
+    free(table);
+}
+
+// ---------------------------------------------------------------------------
+// Internal: find slot
+// ---------------------------------------------------------------------------
+
+// Returns the index of the slot for key: either the existing entry or the
+// first empty/tombstone slot where the key should be inserted.
+static size_t find_slot(ht_entry* entries, size_t capacity, ht_key key) {
+    uint64_t hash      = hash_key(key);
+    size_t   index     = (size_t)(hash & (uint64_t)(capacity - 1));
+    size_t   tombstone = SIZE_MAX;  // index of first tombstone seen
+
+    while (true) {
+        ht_entry* e = &entries[index];
+
+        if (IS_EMPTY(*e)) {
+            // Prefer reusing a tombstone slot over an empty one.
+            return tombstone != SIZE_MAX ? tombstone : index;
+        }
+
+        if (IS_TOMBSTONE(*e)) {
+            if (tombstone == SIZE_MAX) tombstone = index;
+        } else if (key_equal(e->key, key)) {
+            return index;  // found existing key
+        }
+
+        if (++index >= capacity) index = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal: expand
+// ---------------------------------------------------------------------------
+
 static bool ht_expand(ht* table) {
-    // Allocate new entries array.
     size_t new_capacity = table->capacity * 2;
-    if (new_capacity < table->capacity) {
-        return false;  // overflow (capacity would be too big)
-    }
+    if (new_capacity < table->capacity) return false;  // overflow
 
     ht_entry* new_entries = calloc(new_capacity, sizeof(ht_entry));
-    if (new_entries == NULL) {
-        return false;
-    }
+    if (new_entries == NULL) return false;
 
-    // Iterate entries, move all non-empty ones to new table's entries.
+    // Rehash all live entries into the new array.
     for (size_t i = 0; i < table->capacity; i++) {
-        ht_entry entry = table->entries[i];
-        if (entry.key != NULL) {
-            ht_set_entry(new_entries, new_capacity, entry.key,
-                         entry.value, NULL);
-        }
+        ht_entry* e = &table->entries[i];
+        if (IS_EMPTY(*e) || IS_TOMBSTONE(*e)) continue;
+        size_t new_index = find_slot(new_entries, new_capacity, e->key);
+        new_entries[new_index] = *e;
     }
 
-    // Free old entries array and update this table's details.
     free(table->entries);
-    table->entries = new_entries;
+    table->entries  = new_entries;
     table->capacity = new_capacity;
     return true;
 }
 
-const char* ht_set(ht* table, const char* key, void* value) {
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+void* ht_get(ht* table, ht_key key) {
+    size_t    index = find_slot(table->entries, table->capacity, key);
+    ht_entry* e     = &table->entries[index];
+    if (IS_EMPTY(*e) || IS_TOMBSTONE(*e)) return NULL;
+    return e->value;
+}
+
+ht_key ht_set(ht* table, ht_key key, void* value) {
     assert(value != NULL);
-    if (value == NULL) {
-        return NULL;
-    }
+    static ht_key null_key = { .type = HT_KEY_STR, .str = NULL };
+    if (value == NULL) return null_key;
 
-    // If length will exceed half of current capacity, expand it.
     if (table->length >= table->capacity / 2) {
-        if (!ht_expand(table)) {
-            return NULL;
-        }
+        if (!ht_expand(table)) return null_key;
     }
 
-    // Set entry and update length.
-    return ht_set_entry(table->entries, table->capacity, key, value,
-                        &table->length);
+    size_t    index = find_slot(table->entries, table->capacity, key);
+    ht_entry* e     = &table->entries[index];
+
+    if (!IS_EMPTY(*e) && !IS_TOMBSTONE(*e)) {
+        // Existing key: update value only.
+        e->value = value;
+        return e->key;
+    }
+
+    // New entry: copy string keys onto the heap; integer keys need no copy.
+    if (key.type == HT_KEY_STR) {
+        char* key_copy = strdup(key.str);
+        if (key_copy == NULL) return null_key;
+        key.str = key_copy;
+    }
+
+    e->key   = key;
+    e->value = value;
+    table->length++;
+    return e->key;
+}
+
+void* ht_remove(ht* table, ht_key key) {
+    size_t    index = find_slot(table->entries, table->capacity, key);
+    ht_entry* e     = &table->entries[index];
+
+    if (IS_EMPTY(*e) || IS_TOMBSTONE(*e)) return NULL;
+
+    void* old_value = e->value;
+
+    if (e->key.type == HT_KEY_STR) free((void*)e->key.str);
+    e->key   = TOMBSTONE;
+    e->value = NULL;
+    table->length--;
+    return old_value;
 }
 
 size_t ht_length(ht* table) {
     return table->length;
 }
 
+// ---------------------------------------------------------------------------
+// Iterator
+// ---------------------------------------------------------------------------
+
 hti ht_iterator(ht* table) {
     hti it;
     it._table = table;
     it._index = 0;
+    it.value  = NULL;
     return it;
 }
 
 bool ht_next(hti* it) {
-    // Loop till we've hit end of entries array.
     ht* table = it->_table;
     while (it->_index < table->capacity) {
-        size_t i = it->_index;
-        it->_index++;
-        if (table->entries[i].key != NULL) {
-            // Found next non-empty item, update iterator key and value.
-            ht_entry entry = table->entries[i];
-            it->key = entry.key;
-            it->value = entry.value;
+        size_t    i = it->_index++;
+        ht_entry* e = &table->entries[i];
+        if (!IS_EMPTY(*e) && !IS_TOMBSTONE(*e)) {
+            it->key   = e->key;
+            it->value = e->value;
             return true;
         }
     }

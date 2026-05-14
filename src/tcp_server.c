@@ -108,49 +108,8 @@ int recv_chunks(
 	}
 
 	if (recv_count < 0) {
-		printf("RECV_COUNT: %ld\n", recv_count);
-
-		if (errno == EAGAIN) {
-			printf("EAGAIN\n");
-		}
-
-		if (errno == EWOULDBLOCK) {
-			printf("EWOULDBLOCK\n");
-		}
-
-		// both of these are generally set together
-
-		/*
-		
-       EAGAIN or EWOULDBLOCK
-              The socket is marked nonblocking and the receive operation
-              would block, or a receive timeout had been set and the
-              timeout expired before data was received.  POSIX.1 allows
-              either error to be returned for this case, and does not
-              require these constants to have the same value, so a
-              portable application should check for both possibilities.
-
-		*/
-
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			// recv_count will always be -1 when there is error, but when RCVTIMEO happens
-			// recv_count returns -1 and sets errno to EAGAIN or EWOULDBLOCK
-			// which is the same thing that happens when more data is expected...
-
-			// adding the below 3 lines allows the RCVTIMEO to work*
-			// *: it doesnt work because it can never reach the return 1; case.
-
-			// we CANNOT just wait forever.
-			// so we need to exit when error, but
-			// RCVTIMEO and SOCKNONBLOCK both make 
-			// recv(...) return -1 and set errno
-			// to EAGAIN and EWOULDBLOCK
-			if (recv_count == -1) {
-				return -1;
-			}
-
-			printf("MORE COMING: %ld\n", recv_count);
-			return 1; // wait for more data...will there ever be data to wait for?
+			return 1;
 		}
 		
 		return -1;
