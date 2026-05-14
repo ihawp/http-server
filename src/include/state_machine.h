@@ -20,6 +20,7 @@ typedef struct {
 
 typedef enum {
     HEADERS = 1,
+    MOVE_BODY,
     BODY,
     RESPONSE,
     GET,

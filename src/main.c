@@ -72,37 +72,50 @@ int main(
 
 	// remove expired clients (passed/at deadline)
 	for (;;) {
-		// collect expired, unlocked keys
+
+		pthread_mutex_lock(&data.lock);
+
+		int expired_fds[ht_length(data.user_states)];
+		int expired_count = 0;
 		hti it = ht_iterator(data.user_states);
+		
 		while (ht_next(&it)) {
 			UserState *us = it.value;
-
 			clock_gettime(CLOCK_MONOTONIC, &ts);
-			int64_t now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000; // ms
+			int64_t now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
 			bool is_expired = now >= us->deadline;
 			bool over_retry = us->retries >= 3;
 
 			if (is_expired || over_retry) {
-				printfid("IS EXPIRED: %d\tOVER RETRY: %d", data.pid, is_expired, over_retry);
-				printfid("REMOVE CLIENT_FD: %d", data.pid, us->client_fd);
-				ht_remove(data.user_states, it.key);
-				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+				expired_fds[expired_count++] = us->client_fd;
+			}
+		}
 
-				us->http_response->status = 500;
+		pthread_mutex_unlock(&data.lock);
+
+		for (int i = 0; i < expired_count; i++) {
+			pthread_mutex_lock(&data.lock);
+			UserState *us = ht_get(data.user_states, HT_INT(expired_fds[i]));
+			ht_remove(data.user_states, HT_INT(expired_fds[i]));
+			pthread_mutex_unlock(&data.lock);
+
+			if (us) {
+				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+				us->http_response->status = 408;
 				send_json_response(
-					&us->client_fd, 
-					us->http_response->status, 
+					&us->client_fd,
+					us->http_response->status,
 					"{"
-						"\"error\": \"Failed to handle request\","
+						"\"error\": \"Request timed out\","
 						"\"success\": false"
 					"}"
 				);
-
 				close(us->client_fd);
 				free_user_state(us);
 			}
 		}
 
+		nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 50000000}, NULL); // 50ms
 	}
 }

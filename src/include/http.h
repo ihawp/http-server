@@ -20,6 +20,11 @@
 #define PATH_SIZE 512
 #define CHAR_SIZE sizeof(char)
 
+typedef struct {
+    char *body_start;
+    int status; // 0 = ok, 1 = EAGAIN, -1 = error
+} RecvHeaderResult;
+
 typedef enum {
 	RETRY_ERROR = 1
 } Errors;
@@ -79,10 +84,10 @@ int find_headers(
 	HTTPRequest *http_request
 );
 
-char *recv_header_chunks(
-	int *client_fd,
-	char *buffer,
-	ssize_t *recv_count
+RecvHeaderResult recv_header_chunks(
+    int *client_fd,
+    char *buffer,
+    ssize_t *recv_count
 );
 
 int recv_header(
@@ -102,19 +107,26 @@ int recv_body_chunks(
 	size_t *body_length
 );
 
+int recv_body(
+	int *client_fd,
+	pid_t *tid,
+	HTTPRequest *http_request,
+	size_t *body_length
+);
+
+int move_body(
+	int *client_fd,
+	pid_t *tid,
+	HTTPRequest *http_request,
+	char *body_start,
+	size_t *body_length
+);
+
 int handle_get_request(
 	int *client_fd,
 	pid_t *tid,
 	HTTPRequest *http_request,
 	HTTPResponse *http_response
-);
-
-int handle_post_request(
-	int *client_fd,
-	pid_t *tid,
-	HTTPRequest *http_request,
-	char *body_start,
-	size_t body_length
 );
 
 int handle_request(

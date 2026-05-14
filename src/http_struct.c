@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -8,34 +6,29 @@
 #include "hash_table.h"
 #include "http_struct.h"
 
+#ifndef CLIENT_BUF_SIZE
+#define CLIENT_BUF_SIZE 1024
+#endif
+
 HTTPRequest *nhreq() {
-	HTTPRequest *htr = xmalloc(sizeof(HTTPRequest));
+    HTTPRequest *htr = xmalloc(sizeof(HTTPRequest));
+    if (htr == NULL) return NULL;
 
-	htr->method = xmalloc(REQ_METHOD_SIZE);
+    memset(htr, 0, sizeof(HTTPRequest));
 
-	if (htr->method == NULL) {
-		free(htr);
-		return NULL;
-	}
+    htr->method = xmalloc(REQ_METHOD_SIZE);
+    if (htr->method == NULL) { free(htr); return NULL; }
 
-	htr->path = xmalloc(REQ_PATH_SIZE);
+    htr->path = xmalloc(REQ_PATH_SIZE);
+    if (htr->path == NULL) { free(htr->method); free(htr); return NULL; }
 
-	if (htr->path == NULL) {
-		free(htr->method);
-		free(htr);
-		return NULL;
-	}
+    htr->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
+    if (htr->http_version == NULL) { free(htr->path); free(htr->method); free(htr); return NULL; }
 
-	htr->http_version = xmalloc(REQ_HTTP_VERSION_SIZE);
+    htr->header_storage = xmalloc(CLIENT_BUF_SIZE + 1);
+    if (htr->header_storage == NULL) { free(htr->http_version); free(htr->path); free(htr->method); free(htr); return NULL; }
 
-	if (htr->http_version == NULL) {
-		free(htr->method);
-		free(htr->path);
-		free(htr);
-		return NULL;
-	}
-
-	return htr;
+    return htr;
 }
 
 HTTPResponse *nhres() {
@@ -82,3 +75,5 @@ void free_http_request(
 
     free(hrq);
 }
+
+#undef CLIENT_BUF_SIZE

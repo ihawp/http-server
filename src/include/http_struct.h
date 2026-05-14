@@ -13,12 +13,15 @@ typedef struct {
 	ht *headers;
 	char *header_storage;
 	char *body;
-	long content_length;
-
-	// allocate on heap with malloc()
+	char *body_start;
 	char *method; // REQ_METHOD_SIZE
 	char *path; // REQ_PATH_SIZE
 	char *http_version; // REQ_HTTP_VERSION_SIZE
+	
+	long content_length;
+	ssize_t recv_count;
+	size_t bs_size; 
+	size_t body_length;
 } HTTPRequest;
 
 typedef struct {
@@ -32,3 +35,6 @@ void free_http_response(
 void free_http_request(
 	HTTPRequest *hrq
 );
+
+HTTPRequest *nhreq();
+HTTPResponse *nhres();
