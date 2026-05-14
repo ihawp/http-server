@@ -661,7 +661,9 @@ void *http_worker(
 				fd = events[n].data.fd;
 
 				// get information from hash table if available (state)
+				pthread_mutex_lock(&wd->lock);
 				us = ht_get(wd->user_states, HT_INT(fd));
+				pthread_mutex_unlock(&wd->lock);
 
 				if (us == NULL) {
 					us = nus(fd);
@@ -670,29 +672,45 @@ void *http_worker(
 					// why save immediatley, why not just on the failure route,
 					// it simplifies things, but I don't like it.
 					if (us != NULL) {
+						pthread_mutex_lock(&wd->lock);
 						ht_set(wd->user_states, HT_INT(fd), us);  // save immediately
+						pthread_mutex_unlock(&wd->lock);
 					}
 				}
 
 				// `us` could be NULL because nus could fail to xmalloc(...)
 				if (us != NULL) {
 
-					us->http_response->status = 200;
+					// should be recorded on HTTPRequest
+					// ps_cap(&us->http_request->speed.start);
+					// and then place inside locks
 					ps_cap(&speed.start);
 					
+					pthread_mutex_lock(&us->mutex);
+					us->http_response->status = 200;
 					hr_result = handle_request(fd, tid, us);
+					pthread_mutex_unlock(&us->mutex);
 
 					if (hr_result == RETRY_ERROR) {
+						
+						pthread_mutex_lock(&us->mutex);
 						us->retries++;
+						pthread_mutex_unlock(&us->mutex);
+
 						ev.data.fd = fd;
 						epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
 						continue;
 					}
 
 					if (hr_result != 0) {
-						// TODO: remove line below after setting 
-						// status where required throughout program
+
+						// TODO: remove line below that sets status 
+						// after setting status where required 
+						// throughout program
+						pthread_mutex_lock(&us->mutex);
 						us->http_response->status = 500;
+						pthread_mutex_unlock(&us->mutex);
+						
 						send_json_response(
 							&fd, 
 							us->http_response->status, 
@@ -701,12 +719,20 @@ void *http_worker(
 								"\"success\": false"
 							"}"
 						);
-						continue;
 					}
 
+					// should be recorded on HTTPRequest
+					// ps_cap(&us->http_request->speed.start);
 					ps_cap(&speed.end);
+
+					// should be printed from HTTPRequest
+					// ps_print_elapsed(&us->http_request->speed, tid_p);
 					ps_print_elapsed(&speed, tid_p);
+
+					pthread_mutex_lock(&wd->lock);
 					ht_remove(wd->user_states, HT_INT(fd));
+					pthread_mutex_unlock(&wd->lock);
+					
 					free_user_state(us);
 				}
 
