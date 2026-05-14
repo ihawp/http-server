@@ -75,6 +75,11 @@ int main(
 
 		pthread_mutex_lock(&data.lock);
 
+		if (ht_length(data.user_states) == 0) {
+			continue;
+		}
+
+		// int expired_fds[ht_length(data.user_states) || 1] // (and remove above `if`)
 		int expired_fds[ht_length(data.user_states)];
 		int expired_count = 0;
 		hti it = ht_iterator(data.user_states);

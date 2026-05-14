@@ -665,6 +665,10 @@ void *http_worker(
 
 				if (us == NULL) {
 					us = nus(fd);
+
+					// TODO: question this
+					// why save immediatley, why not just on the failure route,
+					// it simplifies things, but I don't like it.
 					if (us != NULL) {
 						ht_set(wd->user_states, HT_INT(fd), us);  // save immediately
 					}
@@ -702,11 +706,12 @@ void *http_worker(
 
 					ps_cap(&speed.end);
 					ps_print_elapsed(&speed, tid_p);
+					pthread_mutex_lock(&us->mutex);
+					ht_remove(wd->user_states, HT_INT(fd));
+					pthread_mutex_lock(&us->mutex);
 					free_user_state(us);
 				}
 
-				// move ht_remove inside above if?
-				ht_remove(wd->user_states, HT_INT(fd));
 				epoll_ctl(wd->epc, EPOLL_CTL_DEL, fd, NULL);
 				close(fd);
 			}
