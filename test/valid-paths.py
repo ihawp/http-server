@@ -82,6 +82,7 @@ for i in range(len(check_exists)):
     if (check_exists[i]["result"] == check_exists[i]["expected_result"]):
         succeeded += 1
     else:
+        print(f"{check_exists[i]["result"]}")
         print(f"Test #{i + 1} failed")
 
 print(f"{(succeeded / total) * 100}% of tests passed")

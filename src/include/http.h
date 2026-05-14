@@ -9,15 +9,16 @@
 #include "http_struct.h"
 #include "state_machine.h"
 
+#define CHUNK_SIZE 512
+#define BUFFER_CHUNK_SIZE 512 // must be at least 3
+#define JSON_BUF_SIZE 512
+
 // TODO: rename and organize and refactor and rethink!
 #define MAX_EVENTS 10
 #define MAX_WORKERS 3
 #define HEADER_SIZE 256
 #define MAX_CONTENT_LENGTH 8000
 #define CLIENT_BUF_SIZE 1024
-#define CHUNK_SIZE 512
-#define RESPONSE_BUF_SIZE 512
-#define PATH_SIZE 512
 #define CHAR_SIZE sizeof(char)
 
 typedef struct {

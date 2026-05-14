@@ -71,7 +71,7 @@ void send_json_response(
 	int status,
 	char *error_message	
 ) {
-	char message[RESPONSE_BUF_SIZE];
+	char message[JSON_BUF_SIZE];
 	int message_length;
 
 	message_length = snprintf(
@@ -141,7 +141,7 @@ int sanitize_path(
 FILE *open_file_from_path(
 	char *path
 ) {
-	char public_path[PATH_SIZE];
+	char public_path[REQ_PATH_SIZE];
 	FILE *f;
 
 	printf("Path: %s\n", path);
@@ -162,7 +162,7 @@ FILE *open_file_from_path(
 	// and rebuild it to a hidden internal structure
 	// I will not do that yet
 
-	snprintf(public_path, PATH_SIZE, "public/%s", path);
+	snprintf(public_path, REQ_PATH_SIZE, "public/%s", path);
 	f = fopen(public_path, "rb");
 
 	if (f == NULL) {
@@ -178,7 +178,7 @@ int send_stream_file(
 	HTTPResponse *http_response,
 	FILE *f
 ) {
-	char buffer[CHUNK_SIZE], response[CHUNK_SIZE], hex_header[16];
+	char buffer[BUFFER_CHUNK_SIZE], response[CHUNK_SIZE], hex_header[16];
 	int response_len, byte_count, hex_header_len;
 
 	response_len = snprintf(
@@ -202,7 +202,7 @@ int send_stream_file(
 
 	for (;;) {
 		// -2 for trailing \r\n
-		byte_count = fread(buffer, CHAR_SIZE, CHUNK_SIZE - 2, f);
+		byte_count = fread(buffer, CHAR_SIZE, BUFFER_CHUNK_SIZE - 2, f);
 	
 		if (byte_count) {
 			memcpy(buffer + byte_count, "\r\n", 2);
@@ -592,7 +592,7 @@ int handle_request(
 
 				user_state->state = FIN;
 				break;
-			case ERROR:
+			case ERROR: // not used
 				user_state->http_response->status = 501;
 				return -1;
 				break;
@@ -612,13 +612,13 @@ void *http_worker(
 	struct sockaddr_storage peer_addr = {0};
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	socklen_t peer_addrlen = sizeof(struct sockaddr_storage);
-	int client_fd, n, ectl, epoll_result, fd, hr_result;
+	int client_fd, n, ectl, epoll_result, fd, hr_result, *tid_p;
 	pid_t tid;
 	struct program_speed speed = {0};
 
 	ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
 	tid = syscall(SYS_gettid);
-	int *tid_p = &tid;
+	tid_p = &tid;
 
 	printfid("Worker Started", tid);
 
@@ -636,7 +636,6 @@ void *http_worker(
 				);
 
 				if (client_fd == -1) {
-					printfid("client_fd", tid);
 					continue;
 				}
 
@@ -668,52 +667,36 @@ void *http_worker(
 				if (us == NULL) {
 					us = nus(fd);
 
-					// TODO: question this
-					// why save immediatley, why not just on the failure route,
-					// it simplifies things, but I don't like it.
 					if (us != NULL) {
+						// save immediatley
 						pthread_mutex_lock(&wd->lock);
-						ht_set(wd->user_states, HT_INT(fd), us);  // save immediately
+						ht_set(wd->user_states, HT_INT(fd), us);
 						pthread_mutex_unlock(&wd->lock);
 					}
 				}
 
-				// `us` could be NULL because nus could fail to xmalloc(...)
 				if (us != NULL) {
 
-					// should be recorded on HTTPRequest
-					// ps_cap(&us->http_request->speed.start);
-					// and then place inside locks
+					// All program speed (ps_...) should be
+					// recorded on HTTPRequest
 					ps_cap(&speed.start);
-					
 					pthread_mutex_lock(&us->mutex);
 					us->http_response->status = 200;
 					hr_result = handle_request(fd, tid, us);
-					pthread_mutex_unlock(&us->mutex);
 
 					if (hr_result == RETRY_ERROR) {
-						
-						pthread_mutex_lock(&us->mutex);
 						us->retries++;
 						pthread_mutex_unlock(&us->mutex);
-
 						ev.data.fd = fd;
 						epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
 						continue;
 					}
 
 					if (hr_result != 0) {
-
-						// TODO: remove line below that sets status 
-						// after setting status where required 
-						// throughout program
-						pthread_mutex_lock(&us->mutex);
-						us->http_response->status = 500;
-						pthread_mutex_unlock(&us->mutex);
-						
+						// no response has been sent yet.
 						send_json_response(
-							&fd, 
-							us->http_response->status, 
+							&fd,
+							500, // should use the us->http_response->status
 							"{"
 								"\"error\": \"Failed to handle request\","
 								"\"success\": false"
@@ -721,18 +704,12 @@ void *http_worker(
 						);
 					}
 
-					// should be recorded on HTTPRequest
-					// ps_cap(&us->http_request->speed.start);
+					pthread_mutex_unlock(&us->mutex);
 					ps_cap(&speed.end);
-
-					// should be printed from HTTPRequest
-					// ps_print_elapsed(&us->http_request->speed, tid_p);
 					ps_print_elapsed(&speed, tid_p);
-
 					pthread_mutex_lock(&wd->lock);
 					ht_remove(wd->user_states, HT_INT(fd));
 					pthread_mutex_unlock(&wd->lock);
-					
 					free_user_state(us);
 				}
 

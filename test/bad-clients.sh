@@ -1,5 +1,24 @@
 #!/bin/bash
 
+echo "Bad client #1 (malicious)"
+curl 127.0.0.1:3000// \
+    --verbose \
+    -X POST \
+    --path-as-is \
+    -H "Content-Length: 2090" \
+    -d h \
+
+echo "Bad client #2 (slow)"
+DATA=$(python3 -c "print('a' * 2000)")
+curl 127.0.0.1:3000 \
+    --verbose \
+    -X POST \
+    --limit-rate 200 \
+    --path-as-is \
+    -H "Content-Length:2000" \
+    -d "$DATA" \
+
+echo "Bad client #3 (slow)"
 (
   echo -e "DELETE / HTTP/1.1\r\n"
   echo -e "Host: 127.0.0.1:3000\r\n"
