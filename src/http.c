@@ -708,7 +708,7 @@ void *http_worker(
 					ps_print_elapsed(&speed, tid_p);
 					pthread_mutex_lock(&us->mutex);
 					ht_remove(wd->user_states, HT_INT(fd));
-					pthread_mutex_lock(&us->mutex);
+					pthread_mutex_unlock(&us->mutex);
 					free_user_state(us);
 				}
 
