@@ -1,22 +1,20 @@
 # HTTP/1.1 Server in C
 
-## Useful Resources
+## Quick Start
 
-- [HTTP/1.1](https://datatracker.ietf.org/doc/rfc9112/)
-- [HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
-- [HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111.html)
-- [Security Considerations](https://datatracker.ietf.org/doc/rfc9931/)
-- [getaddrinfo (w/UDP example)](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
-- [epoll (w/usage example)](https://www.man7.org/linux/man-pages/man7/epoll.7.html)
-- [pthread](https://man7.org/linux/man-pages/man7/pthreads.7.html)
-- [pthread_mutex_init](https://man7.org/linux/man-pages/man3/pthread_mutex_lock.3.html)
-- [Threads](https://cs341.cs.illinois.edu/coursebook/Threads)
-- [Hash Table Data Structure](https://www.geeksforgeeks.org/dsa/hash-table-data-structure/)
-- Hash Table Implementation: [Repository](https://github.com/benhoyt/ht) & [Article](https://benhoyt.com/writings/hash-table-in-c/)
-- [Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
-- [Hexadecimal](https://en.wikipedia.org/wiki/Hexadecimal)
-- [Bitwise Operations + etc](https://www.ewskills.com/embedded-c/bitwise-operations)
-- [Response Splitting](https://owasp.org/www-community/attacks/HTTP_Response_Splitting)
+```
+> git clone https://github.com/ihawp/http-server.git
+> cd http-server
+> ./shell/start.sh
+```
+
+### Requirements:
+- Linux/WSL
+- gcc
+
+### Dev Tools:
+- Valgrind
+- Python
 
 ## About
 
@@ -79,3 +77,21 @@ Path traversal is not fully solved; a more robust approach would reconstruct the
 ### StringView
 
 Adapted from Tsoding's video on why C strings are terrible. Watch that video [here](https://www.youtube.com/watch?v=y8PLpDgZc0E).
+
+## Useful Resources
+
+- [HTTP/1.1](https://datatracker.ietf.org/doc/rfc9112/)
+- [HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
+- [HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111.html)
+- [Security Considerations](https://datatracker.ietf.org/doc/rfc9931/)
+- [getaddrinfo (w/UDP example)](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
+- [epoll (w/usage example)](https://www.man7.org/linux/man-pages/man7/epoll.7.html)
+- [pthread](https://man7.org/linux/man-pages/man7/pthreads.7.html)
+- [pthread_mutex_init](https://man7.org/linux/man-pages/man3/pthread_mutex_lock.3.html)
+- [Threads](https://cs341.cs.illinois.edu/coursebook/Threads)
+- [Hash Table Data Structure](https://www.geeksforgeeks.org/dsa/hash-table-data-structure/)
+- Hash Table Implementation: [Repository](https://github.com/benhoyt/ht) & [Article](https://benhoyt.com/writings/hash-table-in-c/)
+- [Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
+- [Hexadecimal](https://en.wikipedia.org/wiki/Hexadecimal)
+- [Bitwise Operations + etc](https://www.ewskills.com/embedded-c/bitwise-operations)
+- [Response Splitting](https://owasp.org/www-community/attacks/HTTP_Response_Splitting)
