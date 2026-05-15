@@ -24,7 +24,7 @@ This implementation uses *[sys/epoll.h](https://www.man7.org/linux/man-pages/man
 
 ### Workers
 
-When a new client connects the connection is accepted with **[accept(...)](https://man7.org/linux/man-pages/man2/accept.2.html)**. If the `client_fd` is successfully created it is added to the epoll monitoring list, where it will eventually be marked as ready. When a client file descriptor is marked as ready it is passed to **handle_request(...)** where it is treated as an HTTP/1.1 request. After the request is handled the file descriptor is removed from the epoll monitoring list. If a client's request cannot be completed on this cycle their `UserState` is saved to a hash table where their `client_fd` is the key.
+When a new client connects the connection is accepted with **[accept(...)](https://man7.org/linux/man-pages/man2/accept.2.html)**. If the `client_fd` is successfully created it is added to the epoll monitoring list, where it will eventually be marked as ready. When a client file descriptor is marked as ready it is passed to `handle_request(...)` where it is treated as an HTTP/1.1 request. After the request is handled the file descriptor is removed from the epoll monitoring list. If a client's request cannot be completed on this cycle their `UserState` is saved to a hash table where their `client_fd` is the key.
 
 ### State Machine Architecture
 
