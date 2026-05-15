@@ -3,9 +3,9 @@
 ## Quick Start
 
 ```bash
-> git clone https://github.com/ihawp/http-server.git
-> cd http-server
-> ./shell/start.sh
+git clone https://github.com/ihawp/http-server.git
+cd http-server
+./shell/start.sh
 ```
 
 ### Requirements:
