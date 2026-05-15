@@ -21,6 +21,8 @@ int main(
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	struct process_data data = {0}; // holds hash table for user state
 	struct timespec ts;
+	UserState *us;
+	int64_t now;
 
 	signal(SIGINT, handle_sigint);
 
@@ -80,9 +82,9 @@ int main(
 		hti it = ht_iterator(data.user_states);
 		
 		while (ht_next(&it)) {
-			UserState *us = it.value;
+			us = it.value;
 			clock_gettime(CLOCK_MONOTONIC, &ts);
-			int64_t now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+			now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 
 			bool is_expired = now >= us->deadline;
 			bool over_retry = us->retries >= 3;
@@ -96,7 +98,7 @@ int main(
 
 		for (int i = 0; i < expired_count; i++) {
 			pthread_mutex_lock(&data.lock);
-			UserState *us = ht_get(data.user_states, HT_INT(expired_fds[i]));
+			us = ht_get(data.user_states, HT_INT(expired_fds[i]));
 			ht_remove(data.user_states, HT_INT(expired_fds[i]));
 			pthread_mutex_unlock(&data.lock);
 
@@ -112,6 +114,12 @@ int main(
 					"}"
 				);
 				close(us->client_fd);
+
+				pthread_mutex_lock(&us->mutex);
+				ps_cap(&us->speed.end);
+				ps_print_elapsed(&us->speed, &data.pid);
+				pthread_mutex_unlock(&us->mutex);
+
 				free_user_state(us);
 			}
 		}

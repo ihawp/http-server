@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <pthread.h>
+#include "program_speed.h"
 #include "http_struct.h"
 
 #define MAX_EPOLL_RETRIES 3
@@ -15,6 +16,7 @@ typedef struct {
     int64_t deadline;
     HTTPRequest *http_request;
     HTTPResponse *http_response;
+    struct program_speed speed;
     pthread_mutex_t mutex; // lock
 } UserState;
 

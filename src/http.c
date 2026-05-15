@@ -614,7 +614,7 @@ void *http_worker(
 	socklen_t peer_addrlen = sizeof(struct sockaddr_storage);
 	int client_fd, n, ectl, epoll_result, fd, hr_result, *tid_p;
 	pid_t tid;
-	struct program_speed speed = {0};
+	UserState *us = {0};
 
 	ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
 	tid = syscall(SYS_gettid);
@@ -656,7 +656,6 @@ void *http_worker(
 				}
 			} else {
 				// data ready
-				UserState *us;
 				fd = events[n].data.fd;
 
 				// get information from hash table if available (state)
@@ -678,9 +677,15 @@ void *http_worker(
 				if (us != NULL) {
 
 					// All program speed (ps_...) should be
-					// recorded on HTTPRequest
-					ps_cap(&speed.start);
+					// recorded on UserState
 					pthread_mutex_lock(&us->mutex);
+
+					// if a start time has not been recorded
+					// record one:
+					if (us->speed.start.tv_nsec == 0 && us->speed.start.tv_sec == 0) {
+						ps_cap(&us->speed.start);
+					}
+
 					us->http_response->status = 200;
 					hr_result = handle_request(fd, tid, us);
 
@@ -704,12 +709,14 @@ void *http_worker(
 						);
 					}
 
+					ps_cap(&us->speed.end);
+					ps_print_elapsed(&us->speed, tid_p);
 					pthread_mutex_unlock(&us->mutex);
-					ps_cap(&speed.end);
-					ps_print_elapsed(&speed, tid_p);
+
 					pthread_mutex_lock(&wd->lock);
 					ht_remove(wd->user_states, HT_INT(fd));
 					pthread_mutex_unlock(&wd->lock);
+					
 					free_user_state(us);
 				}
 
