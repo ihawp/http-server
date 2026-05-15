@@ -48,7 +48,7 @@ When a request is made to the server and the client file descriptor has eventual
 
 Since headers are expected at the beginning of any content sent by the client, we start by receiving chunks with `recv_header_chunks(...)` until we find the start of body indicator (`\r\n\r\n`), or something goes wrong (No data available, client closed connection, etc).
 
-Once we find the start of body indicator we can safely assume two things. One, we have received all of the available headers for the request, and two, we may have received the beginning of the body already. The latter only matters if the user is attempting to send a body as part of their request (i.e not a GET, DELETE ... request).
+Once we find the start of body indicator we can safely assume two things. One, we have received all of the available headers for the request, and two, we may have received the beginning of the body already. The latter only matters if the user is attempting to send a body as part of their request (i.e not a `GET`, `DELETE` ... request).
 
 When the latter is the case, we use the difference between the pointer at the beginning of the header string and the pointer to the `\r\n\r\n` sequence to determine how much of the body has already been read. Once determined, the pointer pointing at the `\r\n\r\n` sequence is incremented by 4 to move past the sequence to the beginning of the body text. We then use  `recv_body_chunks(...)` to receive the rest of the bytes until the `http_request->content_length` is reached or exceeded.
 
