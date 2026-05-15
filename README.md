@@ -46,11 +46,11 @@ Well, sometimes clients lie. If a client tells me (whole-heartedly) that they ar
 
 When a request is made to the server and the client file descriptor has eventually been marked as ready, the HTTP lifecycle begins.
 
-Since headers are expected at the beginning of any content sent by the client, we start by receiving chunks with **recv_header_chunks(...)** until we find the start of body indicator (**\r\n\r\n**), or something goes wrong (No data available, client closed connection, etc).
+Since headers are expected at the beginning of any content sent by the client, we start by receiving chunks with `recv_header_chunks(...)` until we find the start of body indicator (`\r\n\r\n`), or something goes wrong (No data available, client closed connection, etc).
 
 Once we find the start of body indicator we can safely assume two things. One, we have received all of the available headers for the request, and two, we may have received the beginning of the body already. The latter only matters if the user is attempting to send a body as part of their request (i.e not a GET, DELETE ... request).
 
-When the latter is the case, we use the difference between the pointer at the beginning of the header string and the pointer to the **\r\n\r\n** sequence to determine how much of the body has already been read. Once determined, the pointer pointing at the **\r\n\r\n** sequence is incremented by 4 to move past the sequence to the beginning of the body text. We then use **recv_body_chunks(...)** to receive the rest of the bytes until the **http_request->content_length** is reached or exceeded.
+When the latter is the case, we use the difference between the pointer at the beginning of the header string and the pointer to the `\r\n\r\n` sequence to determine how much of the body has already been read. Once determined, the pointer pointing at the `\r\n\r\n` sequence is incremented by 4 to move past the sequence to the beginning of the body text. We then use  `recv_body_chunks(...)` to receive the rest of the bytes until the `http_request->content_length` is reached or exceeded.
 
 ### Headers
 
@@ -58,15 +58,15 @@ Headers are stored in a hash table (per [HTTP/1.1](https://datatracker.ietf.org/
 
 Previously, headers were stored inside a `LIMArray` as a `LineInMemory` struct, which contained a pointer to the start of the string and a count outlining how long the string is, so retrieving a specific header required a linear scan through all entries to find a match.
 
-The Content-Length is read into memory as a long using **[strtol(...)](https://man7.org/linux/man-pages/man3/strtol.3.html)** during the **find_headers(...)** call. This value is stored in the **HTTPRequest** struct.
+The Content-Length is read into memory as a long using **[strtol(...)](https://man7.org/linux/man-pages/man3/strtol.3.html)** during the `find_headers(...)` call. This value is stored in the `HTTPRequest` struct.
 
-It is safe to assume that the **HTTPRequest** struct will store data from the user's request, while the **HTTPResponse** struct will store hints about how to respond to the user's request, such as the status code.
+It is safe to assume that the `HTTPRequest` struct will store data from the user's request, while the `HTTPResponse` struct will store hints about how to respond to the user's request, such as the status code.
 
 ### GET
 
-GET requests are served from the */public* folder using **send_stream_file(...)**, which streams the file to the client in chunks using Chunked Transfer-Encoding.
+GET requests are served from the */public* folder using `send_stream_file(...)`, which streams the file to the client in chunks using Chunked Transfer-Encoding.
 
-Before the file is opened, the path goes through two checks. **decode_url(...)** decodes any percent-encoded characters (e.g. `%20` → ` `), and **sanitize_path(...)** rejects paths containing `..`, double slashes, or spaces to mitigate path traversal attacks. If either check fails the request is rejected.
+Before the file is opened, the path goes through two checks. `decode_url(...)` decodes any percent-encoded characters (e.g. `%20` → ` `), and `sanitize_path(...)` rejects paths containing `..`, double slashes, or spaces to mitigate path traversal attacks. If either check fails the request is rejected.
 
 Path traversal is not fully solved; a more robust approach would reconstruct the path internally rather than sanitizing the client-provided string directly:
 
