@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-```
+```bash
 > git clone https://github.com/ihawp/http-server.git
 > cd http-server
 > ./shell/start.sh
@@ -68,7 +68,7 @@ Before the file is opened, the path goes through two checks. `decode_url(...)` d
 
 Path traversal is not fully solved; a more robust approach would reconstruct the path internally rather than sanitizing the client-provided string directly:
 
-```
+```c
 // for safety you could split apart the path 
 // and rebuild it to a hidden internal structure
 // ...
