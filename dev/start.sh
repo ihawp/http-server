@@ -1,6 +1,6 @@
 #!/bin/bash
 
-./shell/build.sh
+./dev/build.sh
 
 if [ $? -ne 0 ]; then
     echo 'Compilation failed'

@@ -71,7 +71,6 @@ Path traversal is not fully solved; a more robust approach would reconstruct the
 ```c
 // for safety you could split apart the path 
 // and rebuild it to a hidden internal structure
-// ...
 ```
 
 ### StringView

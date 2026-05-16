@@ -158,9 +158,32 @@ FILE *open_file_from_path(
 		return NULL;
 	}
 
+	/* IN TEST:
+
+	// path starts with "/" (0x2F)
+
+	*path++;
+
+	StringView ppsv = sv(path);
+	StringView hold;
+
+	// split on the /, until end found?
+	for (;;) {
+		hold = split_by_delim(&ppsv, 0x2F);
+		printf("hold\n");
+		SV_print(&hold);
+		printf("ppsv\n");
+		SV_print(&ppsv);
+
+		if (ppsv.count == 0) {
+			break;
+		}
+	}
+
+	IN TEST */
+
 	// for safety you could split apart the path 
 	// and rebuild it to a hidden internal structure
-	// I will not do that yet
 
 	snprintf(public_path, REQ_PATH_SIZE, "public/%s", path);
 	f = fopen(public_path, "rb");
@@ -214,8 +237,8 @@ int send_stream_file(
 				byte_count
 			);
 
-			if (send_wrapper(client_fd, hex_header, hex_header_len) < 0 ||
-				send_wrapper(client_fd, buffer, byte_count + 2) < 0
+			if (send_wrapper(client_fd, hex_header, hex_header_len) < 0 
+				|| send_wrapper(client_fd, buffer, byte_count + 2) < 0
 			) {
 				fclose(f);
 				return -1;
@@ -605,22 +628,20 @@ int handle_request(
 	return 0;
 }
 
-void *http_worker(
+void *accept_worker(
 	void *data
 ) {
 	struct process_data *wd = data;
 	struct sockaddr_storage peer_addr = {0};
 	struct epoll_event ev, events[MAX_EVENTS] = {0};
 	socklen_t peer_addrlen = sizeof(struct sockaddr_storage);
-	int client_fd, n, ectl, epoll_result, fd, hr_result, *tid_p;
+	int client_fd, n, ectl, epoll_result, fd;
 	pid_t tid;
-	UserState *us = {0};
 
 	ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
 	tid = syscall(SYS_gettid);
-	tid_p = &tid;
 
-	printfid("Worker Started", tid);
+	printfid("Accept Worker Started", tid);
 
 	for (;;) {
 		epoll_result = epoll_wait(wd->epc, events, MAX_EVENTS, -1);
@@ -628,7 +649,6 @@ void *http_worker(
 		
 		for (n = 0; n < epoll_result; ++n) {
 			if (events[n].data.fd == wd->sfd) {
-
 				client_fd = accept(
 					wd->sfd, 
 					(struct sockaddr*) &peer_addr, 
@@ -640,7 +660,7 @@ void *http_worker(
 				}
 
 				if (setnonblocking(client_fd) == -1) {
-					printfid("blocking", tid);
+					printfid("setnonblocking", tid);
 				}
 
 				ev.data.fd = client_fd;
@@ -651,10 +671,105 @@ void *http_worker(
 				}
 
 				if (ectl == -1) {
-					printfid("setnonblocking epoll_ctl", tid);
+					printfid("epoll_ctl", tid);
 					exit(EXIT_FAILURE);
 				}
-			} else {
+			}
+		}
+	}
+
+	printfid("Accept Worker Exiting", tid);
+}
+
+void *delete_worker(
+	void *data
+) {
+	struct process_data *wd = data;
+	struct timespec ts;
+	UserState *us;
+	int64_t now;
+
+	pid_t tid = syscall(SYS_gettid);
+	printfid("Delete Worker Started", tid);
+
+	for (;;) {
+
+		pthread_mutex_lock(&wd->lock);
+
+		int expired_fds[ht_length(wd->user_states) || 1];
+		int expired_count = 0;
+		hti it = ht_iterator(wd->user_states);
+		
+		while (ht_next(&it)) {
+			us = it.value;
+			clock_gettime(CLOCK_MONOTONIC, &ts);
+			now = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+
+			bool is_expired = now >= us->deadline;
+			bool over_retry = us->retries >= 3;
+
+			if (is_expired || over_retry) {
+				expired_fds[expired_count++] = us->client_fd;
+			}
+		}
+
+		pthread_mutex_unlock(&wd->lock);
+
+		for (int i = 0; i < expired_count; i++) {
+			pthread_mutex_lock(&wd->lock);
+			us = ht_get(wd->user_states, HT_INT(expired_fds[i]));
+			ht_remove(wd->user_states, HT_INT(expired_fds[i]));
+			pthread_mutex_unlock(&wd->lock);
+
+			if (us) {
+				epoll_ctl(wd->epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+				us->http_response->status = 408;
+				send_json_response(
+					&us->client_fd,
+					us->http_response->status,
+					"{"
+						"\"error\": \"Request timed out\","
+						"\"success\": false"
+					"}"
+				);
+				close(us->client_fd);
+
+				pthread_mutex_lock(&us->mutex);
+				ps_cap(&us->speed.end);
+				ps_print_elapsed(&us->speed, &wd->pid);
+				pthread_mutex_unlock(&us->mutex);
+
+				free_user_state(us);
+			}
+		}
+
+		nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 50000000}, NULL); // 50ms
+	}
+
+	printfid("Delete Worker Exiting", tid);
+}
+
+void *http_worker(
+	void *data
+) {
+	struct process_data *wd = data;
+	struct epoll_event ev, events[MAX_EVENTS] = {0};
+	int n, epoll_result, fd, hr_result, *tid_p;
+	pid_t tid;
+	UserState *us = {0};
+
+	ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+	tid = syscall(SYS_gettid);
+	tid_p = &tid;
+
+	printfid("HTTP Worker Started", tid);
+
+	for (;;) {
+		epoll_result = epoll_wait(wd->epc, events, MAX_EVENTS, -1);
+		if (epoll_result < 0) continue;
+		
+		for (n = 0; n < epoll_result; ++n) {
+			if (events[n].data.fd != wd->sfd) {
 				// data ready
 				fd = events[n].data.fd;
 
@@ -726,5 +841,5 @@ void *http_worker(
 		}
 	}
 
-	printfid("Worker Exiting", tid);
+	printfid("HTTP Worker Exiting", tid);
 }

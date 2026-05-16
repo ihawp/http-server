@@ -136,6 +136,14 @@ int handle_request(
 	UserState *user_state
 );
 
+void *accept_worker(
+	void *data
+);
+
+void *delete_worker(
+	void *data
+);
+
 void *http_worker(
 	void *data
 );
