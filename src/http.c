@@ -612,8 +612,12 @@ int handle_request(
 				);
 
 				if (transfer_encoding != NULL && content_length != NULL) {
-					printfid("Failed here.", tid);
-					return -1; // error per http/1.1
+					// error per http/1.1
+					// TODO:
+					// unless I decide to forward the message
+					// in which case the content-length header is to be removed
+					// and instead just process the transfer-encoding
+					return -1;
 				}
 
 				user_state->state = MOVE_BODY;
@@ -664,7 +668,9 @@ int handle_request(
 				}
 
 				if (result == 1) {
-					// keep state the same and keep connection (CONNECT) open.
+					// TODO:
+					// keep state the same and keep 
+					// connection (CONNECT) open.
 					continue;
 				}
 

@@ -84,7 +84,7 @@ void ht_destroy(ht* table, void (*free_v)(void*)) {
 
             // free() or NULL
             if (free_v) {
-                free((void*)e->value);
+                free_v((void*)e->value);
             }
         }
     }
