@@ -172,6 +172,22 @@ FILE *open_file_from_path(
 	return f;
 }
 
+/*
+Only called if the client is sending messages as chunks
+using Transfer-Encoding: Chunked for their POST, etc request.
+
+NOT included in http.h yet
+*/
+int recv_client_stream(
+	int *client_fd,
+	HTTPRequest *http_request,
+	HTTPResponse *http_response
+) {
+	// use hex_digit(...);
+
+	
+}
+
 int send_stream_file(
 	int *client_fd,
 	HTTPRequest *http_request,
@@ -180,6 +196,8 @@ int send_stream_file(
 ) {
 	char buffer[BUFFER_CHUNK_SIZE], response[CHUNK_SIZE], hex_header[16];
 	int response_len, byte_count, hex_header_len;
+
+	// check if client accept chunked transfer encoding.
 
 	response_len = snprintf(
 		response, 
@@ -273,6 +291,8 @@ int find_headers(
 	char *line_start;
 
 	for (int i = 0; i < s.count; i++) {
+		
+		// TODO: why is this here?
 		if (i + 1 >= s.count) {
 			break;
 		}
@@ -288,21 +308,29 @@ int find_headers(
 					break;
 				}
 			} else {
-				value = (StringView) {
-					.string = line_start, 
-					.count = count
-				};
+				value = (StringView) { .string = line_start, .count = count };
 				key = split_by_delim(&value, 0x3A);
-				
 				if (key.count == 0) continue;
 
-				char keybuffer[key.count + 1], valuebuffer[value.count + 1];
+				// to save the value, key can be local since number
+				// is used for actual indexing based on passed key
+
+				// TODO: free(...) this *valuebuffer properly.
+				char keybuffer[key.count + 1];
+				char *valuebuffer = xmalloc(value.count + 1);
+				if (valuebuffer == NULL) {
+					return -1;
+				}
 
 				trim_by_delim(&key, 0x20);
 				trim_by_delim(&value, 0x20);
 				SV_to_memory(keybuffer, key.count + 1, &key);
 				SV_to_memory(valuebuffer, value.count + 1, &value);
 
+				printf("KEY: %s\n", keybuffer);
+				printf("VALUE: %s\n", valuebuffer);
+
+				// can remove this if from here and check later when using
 				if (strcmp(keybuffer, "Content-Length") == 0) {
 					http_request->content_length = strtol(valuebuffer, NULL, 10);
 				}
@@ -470,6 +498,33 @@ int move_body(
 	return 0;
 }
 
+/*
+Returns:
+- 1 client still sending/receiving info
+- (-1) client/server failed
+- 0 successfully finished talking to client
+
+Implementing CONNECT is bad, because CONNECT is bad, but...
+it is a part of HTTP/1.1!
+*/
+int handle_connect_request(
+	int client_fd,
+	pid_t *tid,
+	HTTPRequest *http_request,
+	HTTPResponse *http_response
+) {
+	
+	if (1) {
+		return -1;
+	}
+
+	if (1) {
+		return 1;
+	}
+
+	return 0;
+}
+
 int handle_get_request(
 	int *client_fd,
 	pid_t *tid,
@@ -503,6 +558,21 @@ int handle_request(
 		return -1;
 	}
 
+	/*
+	CONNECT
+	DELETE
+	GET
+	HEAD
+	OPTIONS
+	PATCH
+	POST
+	PUT
+	TRACE
+
+	Below is a shit show.
+
+	CONNECT will need to have BODY be forever
+	*/
 	while (user_state->state != FIN) {
 		switch (user_state->state) {
 			case HEADERS:
@@ -527,11 +597,45 @@ int handle_request(
 					return -1;
 				}
 
+				user_state->state = CHECK_HEADERS;
+
+				break;
+			case CHECK_HEADERS:
+				char *transfer_encoding = ht_get(
+					user_state->http_request->headers, 
+					HT_STR("Transfer-Encoding")
+				);
+
+				char *content_length = ht_get(
+					user_state->http_request->headers,
+					HT_STR("Content-Length")
+				);
+
+				if (transfer_encoding != NULL && content_length != NULL) {
+					printfid("Failed here.", tid);
+					return -1; // error per http/1.1
+				}
+
 				user_state->state = MOVE_BODY;
 
 				if (strcmp(user_state->http_request->method, "GET") == 0) {
 					user_state->state = GET;
 				}
+
+				break;
+			case CHECK_REQUEST_METHOD:
+
+				#define check(s) strcmp(user_state->http_request->method, s) == 0
+
+				if (check("GET")) {
+					user_state->state = GET;
+				} else if (check("CONNECT")) {
+					user_state->state = CONNECT;
+				} else if (check("POST")) {
+					user_state->state = MOVE_BODY;
+				} // ...
+
+				#undef check
 
 				break;
 			case GET:
@@ -547,6 +651,24 @@ int handle_request(
 
 				user_state->state = FIN;
 				break;
+			case CONNECT:
+				result = handle_connect_request(
+					client_fd,
+					&tid,
+					user_state->http_request,
+					user_state->http_response
+				);
+				
+				if (result < 0) {
+					return -1;
+				}
+
+				if (result == 1) {
+					// keep state the same and keep connection (CONNECT) open.
+					continue;
+				}
+
+				user_state->state = FIN;				
 			case MOVE_BODY:
 				if (move_body(
 					&client_fd, 
@@ -561,6 +683,8 @@ int handle_request(
 				user_state->state = BODY;
 				break;
 			case BODY:
+				printf("HEADERS:\n%s\n", user_state->http_request->header_storage);
+
 				result = recv_body(
 					&client_fd, 
 					&tid, 
@@ -676,12 +800,8 @@ void *http_worker(
 
 				if (us != NULL) {
 
-					// All program speed (ps_...) should be
-					// recorded on UserState
 					pthread_mutex_lock(&us->mutex);
 
-					// if a start time has not been recorded
-					// record one:
 					if (us->speed.start.tv_nsec == 0 && us->speed.start.tv_sec == 0) {
 						ps_cap(&us->speed.start);
 					}

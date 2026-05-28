@@ -13,7 +13,6 @@
 HTTPRequest *nhreq() {
     HTTPRequest *htr = xmalloc(sizeof(HTTPRequest));
     if (htr == NULL) return NULL;
-
     memset(htr, 0, sizeof(HTTPRequest));
 
     htr->method = xmalloc(REQ_METHOD_SIZE);
@@ -33,10 +32,11 @@ HTTPRequest *nhreq() {
 
 HTTPResponse *nhres() {
 	HTTPResponse *htr = xmalloc(sizeof(HTTPResponse));
-	
-	if (htr == NULL) {
-		return NULL;
-	}
+	if (htr == NULL) { return NULL; }
+	memset(htr, 0, sizeof(HTTPResponse));
+
+	htr->headers = xmalloc(RES_HEADERS_SIZE);
+	if (htr->headers == NULL) { free(htr); free(htr->headers); return NULL; }
 
 	return htr;
 }
@@ -45,7 +45,7 @@ void free_http_response(
 	HTTPResponse *htr
 ) {
 	htr->status = 0;
-
+	free(htr->headers);
     free(htr);
 }
 
@@ -54,7 +54,7 @@ void free_http_request(
 ) {
 	// can be null when requests do not go past recv_header_chunks
 	if (hrq->headers != NULL) {
-		ht_destroy(hrq->headers);
+		ht_destroy(hrq->headers, free);
 	}
 
 	if (hrq->body != NULL) {

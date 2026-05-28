@@ -8,9 +8,11 @@
 #define REQ_METHOD_SIZE 16
 #define REQ_PATH_SIZE 256
 #define REQ_HTTP_VERSION_SIZE 24
+#define RES_HEADERS_SIZE 1024
 
 typedef struct {
 	ht *headers;
+	
 	char *header_storage;
 	char *body;
 	char *body_start;
@@ -25,6 +27,8 @@ typedef struct {
 } HTTPRequest;
 
 typedef struct {
+	char *headers;
+
 	int status;
 } HTTPResponse;
 

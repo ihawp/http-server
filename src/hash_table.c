@@ -75,11 +75,17 @@ ht* ht_create(void) {
     return table;
 }
 
-void ht_destroy(ht* table) {
+// pass free() as destructor function, or NULL (free_v)
+void ht_destroy(ht* table, void (*free_v)(void*)) {
     for (size_t i = 0; i < table->capacity; i++) {
         ht_entry* e = &table->entries[i];
         if (!IS_EMPTY(*e) && !IS_TOMBSTONE(*e) && e->key.type == HT_KEY_STR) {
             free((void*)e->key.str);
+
+            // free() or NULL
+            if (free_v) {
+                free((void*)e->value);
+            }
         }
     }
     free(table->entries);

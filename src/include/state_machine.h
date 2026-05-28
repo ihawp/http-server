@@ -22,10 +22,13 @@ typedef struct {
 
 typedef enum {
     HEADERS = 1,
+    CHECK_HEADERS,
+    CHECK_REQUEST_METHOD,
+    GET,
+    CONNECT,
     MOVE_BODY,
     BODY,
     RESPONSE,
-    GET,
     ERROR,
     FIN
 } State;

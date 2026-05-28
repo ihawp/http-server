@@ -44,7 +44,7 @@ struct ht {
 ht* ht_create(void);
 
 // Free memory allocated for hash table, including allocated string keys.
-void ht_destroy(ht* table);
+void ht_destroy(ht* table, void (*free_v)(void*));
 
 // Get item with given key. Returns value or NULL if not found.
 void* ht_get(ht* table, ht_key key);

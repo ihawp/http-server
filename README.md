@@ -32,7 +32,7 @@ To prevent malicious and slow requests from hanging the server, a state machine 
 
 The timeout is currently set to `5000ms` for development, though you'd expect something in the range of `50ms` to `500ms` in a real production environment.
 
-Retries happen as the client fails to send data (causing EAGAIN or EWOULDBLOCK). When this happens the client is moved back into the epoll waitlist using `epoll_ctl(...)`/`EPOLL_CTL_MOD` and their `UserState` data is placed in a hash table that is accessible by the `http_worker(...)` threads and the main thread.
+Retries happen as the client fails to send data (causing EAGAIN or EWOULDBLOCK). When this happens the client is moved back into the epoll waitlist using `epoll_ctl(...)`/`EPOLL_CTL_MOD` and their `UserState` data continues to be placed in the `program_data` hash table that is accessible by the `http_worker(...)` threads and the main thread.
 
 If the client reaches 3 retries, or they don't send all their data before the deadline, any data allocated for their request is freed, they are sent a `JSON` response indicating a failure, and their connection is closed.
 
@@ -83,7 +83,11 @@ Adapted from Tsoding's video on why C strings are terrible. Watch that video [he
 - [HTTP/1.1](https://datatracker.ietf.org/doc/rfc9112/)
 - [HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)
 - [HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111.html)
+- [HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP)
 - [Security Considerations](https://datatracker.ietf.org/doc/rfc9931/)
+- [Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
+- [Hexadecimal](https://en.wikipedia.org/wiki/Hexadecimal)
+- [ASCII Table](https://www.rapidtables.com/code/text/ascii-table.html)
 - [getaddrinfo (w/UDP example)](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
 - [epoll (w/usage example)](https://www.man7.org/linux/man-pages/man7/epoll.7.html)
 - [pthread](https://man7.org/linux/man-pages/man7/pthreads.7.html)
@@ -91,7 +95,6 @@ Adapted from Tsoding's video on why C strings are terrible. Watch that video [he
 - [Threads](https://cs341.cs.illinois.edu/coursebook/Threads)
 - [Hash Table Data Structure](https://www.geeksforgeeks.org/dsa/hash-table-data-structure/)
 - Hash Table Implementation: [Repository](https://github.com/benhoyt/ht) & [Article](https://benhoyt.com/writings/hash-table-in-c/)
-- [Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal)
-- [Hexadecimal](https://en.wikipedia.org/wiki/Hexadecimal)
 - [Bitwise Operations + etc](https://www.ewskills.com/embedded-c/bitwise-operations)
 - [Response Splitting](https://owasp.org/www-community/attacks/HTTP_Response_Splitting)
+- [Parallel Computer Architecture and Programming](https://www.youtube.com/playlist?list=PLpIxOj-HnDsO4Atvrp86c-4La9Mq3kMQZ)
