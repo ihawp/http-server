@@ -271,6 +271,11 @@ int extract_path_method_version(
 	StringView fsvh = split_by_delim(&svh, 0x20);
 	StringView path = split_by_delim(&svh, 0x20);
 
+	if (fsvh.count >= REQ_METHOD_SIZE
+		|| svh.count >= REQ_HTTP_VERSION_SIZE) {
+		return -1;
+	}
+
 	if (path.count >= REQ_PATH_SIZE) {
 		return -414; // return a 414
 	}
@@ -290,15 +295,15 @@ int find_headers(
 	int last_line = 0, count;
 	char *line_start;
 
-	for (int i = 0; i < s.count; i++) {
-		
-		// TODO: why is this here?
-		if (i + 1 >= s.count) {
-			break;
-		}
-	
-		// Checks for \r\n (carriage return, newline)
-		if (s.string[i] == 0x0D && s.string[i + 1] == 0x0A) {
+	for (int i = 0; i <= s.count; i++) {
+
+		// Checks for \r\n (carriage return, newline) CRLF
+		if (s.string[i] == 0x0D && s.string[i + 1] == 0x0A 
+			|| i == s.count) {
+				// i == s.count because (for final header):
+				// I add a null terminator in recv_header(...) before the \r\n\r\n
+				// before incrementing the pointer position by 4 to the start of body
+				// so there is no \r\n\r\n in this StringView s after the final header
 
 			line_start = (last_line == 0) ? s.string : &s.string[last_line + 2];
 			count = (int)(s.string + i - line_start);
@@ -314,8 +319,6 @@ int find_headers(
 
 				// to save the value, key can be local since number
 				// is used for actual indexing based on passed key
-
-				// TODO: free(...) this *valuebuffer properly.
 				char keybuffer[key.count + 1];
 				char *valuebuffer = xmalloc(value.count + 1);
 				if (valuebuffer == NULL) {
@@ -324,11 +327,14 @@ int find_headers(
 
 				trim_by_delim(&key, 0x20);
 				trim_by_delim(&value, 0x20);
+
 				SV_to_memory(keybuffer, key.count + 1, &key);
 				SV_to_memory(valuebuffer, value.count + 1, &value);
 
-				printf("KEY: %s\n", keybuffer);
-				printf("VALUE: %s\n", valuebuffer);
+				memset(&key, 0, sizeof(StringView));
+				memset(&key.string, 0, key.count);
+				memset(&value, 0, sizeof(StringView));
+				memset(&value.string, 0, value.count);
 
 				// can remove this if from here and check later when using
 				if (strcmp(keybuffer, "Content-Length") == 0) {
