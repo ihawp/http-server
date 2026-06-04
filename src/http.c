@@ -773,14 +773,34 @@ int handle_request(
 				// just stay here :)
 				// until the client closes the connection.
 
-				for (;;) {
+				for (int i = 0; i < 1000000; i++) {
 
 					printfid("Staying here", tid);
 					// the program is NOT staying here!?
 
 				}
 
-				user_state->state = TUNNEL;
+				char message2[JSON_BUF_SIZE];
+				int message_length2;
+
+				message_length2 = snprintf(
+					message2,
+					sizeof(message2),
+					"HTTP/1.1 %d %s\r\n"
+					"Connection: close\r\n"
+					"\r\n",
+					200,
+					http_status_str(200)
+				);
+
+				send_wrapper(&client_fd, message2, message_length2);
+
+				// and now communication can be whatever we want
+				// just need to send some sort of flag to end the connection
+				// spec says!?...
+				if (1) {
+					user_state->state = FIN;
+				}
 
 				break;
 			case RESPONSE:
