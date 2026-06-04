@@ -104,7 +104,7 @@ int main(
 
 			// skip_timer for keep-alive/CONNECT
 			// (incase it escapes, but it can't)
-			// I could try to make the connect synchronous
+			// I could try to make the connect asynchronous
 			// like rather then loop and totally block the worker
 			// I could just save state and keep the connection open
 			// and then let the regular loop happen, but skip the closing
