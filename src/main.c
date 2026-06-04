@@ -103,6 +103,15 @@ int main(
 			pthread_mutex_unlock(&data.lock);
 
 			// skip_timer for keep-alive/CONNECT
+			// (incase it escapes, but it can't)
+			// I could try to make the connect synchronous
+			// like rather then loop and totally block the worker
+			// I could just save state and keep the connection open
+			// and then let the regular loop happen, but skip the closing
+			// and shutdown, etc of the connection after handle_request(...) is
+			// called in the http_worker(...)
+			// will need a flag to identify the response from handle_request(...)
+			// as a CONNECT request that is STILL OPEN
 			if (us && us->skip_timer == 0) {
 				printf("here and now\n");
 				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);

@@ -776,7 +776,8 @@ int handle_request(
 				for (int i = 0; i < 1000000; i++) {
 
 					printfid("Staying here", tid);
-					// the program is NOT staying here!?
+					// should be scanning for messages from the client
+					// recv recv recv recv recv
 
 				}
 
@@ -787,7 +788,7 @@ int handle_request(
 					message2,
 					sizeof(message2),
 					"HTTP/1.1 %d %s\r\n"
-					"Connection: close\r\n"
+					"Connection: keep-alive\r\n"
 					"\r\n",
 					200,
 					http_status_str(200)
