@@ -144,8 +144,6 @@ FILE *open_file_from_path(
 	char public_path[REQ_PATH_SIZE];
 	FILE *f;
 
-	printf("Path: %s\n", path);
-
 	if (decode_url(path) < 0) {
 		return NULL;
 	}
@@ -515,7 +513,7 @@ it is a part of HTTP/1.1!
 */
 int handle_connect_request(
 	int client_fd,
-	pid_t *tid,
+	pid_t tid,
 	HTTPRequest *http_request,
 	HTTPResponse *http_response
 ) {
@@ -529,7 +527,7 @@ int handle_connect_request(
 		"://", 
 		3
 	) != NULL) {
-		printf("MEMMEM fail\n");
+		printfid("MEMMEM fail", tid);
 		return -1;
 	}
 
@@ -668,6 +666,10 @@ int handle_request(
 					user_state->state = MOVE_BODY;
 				} // ...
 
+				printfid("REQUEST METHOD: %s", tid, user_state->http_request->method);
+				printfid("STATE: %d", tid, user_state->state);
+				printfid("SKIP TIMER: %d", tid, user_state->skip_timer);
+
 				#undef check
 
 				break;
@@ -693,12 +695,12 @@ int handle_request(
 
 				result = handle_connect_request(
 					client_fd,
-					&tid,
+					tid,
 					user_state->http_request,
 					user_state->http_response
 				);
 
-				printf("RESULT: %d\n", result);
+				printfid("RESULT: %d", tid, result);
 				
 				if (result < 0) {
 					return -1;
@@ -720,6 +722,7 @@ int handle_request(
 				send_wrapper(&client_fd, message, message_length);
 
 				user_state->state = TUNNEL;
+				break;
 			case MOVE_BODY:
 				if (move_body(
 					&client_fd, 
@@ -734,7 +737,7 @@ int handle_request(
 				user_state->state = BODY;
 				break;
 			case BODY:
-				printf("HEADERS:\n%s\n", user_state->http_request->header_storage);
+				printfid("HEADERS:\n%s", tid, user_state->http_request->header_storage);
 
 				// You should be able to get 'stuck' inside the BODY case if your request
 				// method allows for it (i.e. CONNECT)
@@ -772,7 +775,7 @@ int handle_request(
 
 				for (;;) {
 
-					printf("Staying here\n");
+					printfid("Staying here", tid);
 					// the program is NOT staying here!?
 
 				}
@@ -888,6 +891,7 @@ void *http_worker(
 					hr_result = handle_request(fd, tid, us);
 
 					if (hr_result == RETRY_ERROR) {
+						printfid("", tid);
 						us->retries++;
 						pthread_mutex_unlock(&us->mutex);
 						ev.data.fd = fd;
@@ -895,7 +899,13 @@ void *http_worker(
 						continue;
 					}
 
-					printf("HR_RESULT: %d\n", hr_result);
+					/*
+					[1503]: RESULT: 0
+					[1503]: Whole body found
+					[1503]: HR_RESULT: -1
+					[1503]: Elapsed: 283459 ns (0.283 ms)
+					*/
+					printfid("HR_RESULT: %d", tid, hr_result);
 
 					// connect request isn't waiting on tunnel...
 					// it gets back here and the 500 is sent after and curl closes the connection
