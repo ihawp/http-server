@@ -102,7 +102,9 @@ int main(
 			ht_remove(data.user_states, HT_INT(expired_fds[i]));
 			pthread_mutex_unlock(&data.lock);
 
-			if (us) {
+			// skip_timer for keep-alive/CONNECT
+			if (us && us->skip_timer == 0) {
+				printf("here and now\n");
 				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
 				us->http_response->status = 408;
 				send_json_response(

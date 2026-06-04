@@ -18,6 +18,7 @@ UserState *nus(int client_fd) {
     us->client_fd = client_fd;
     us->state = HEADERS;
     us->retries = 0;
+    us->skip_timer = 0;
     memset(&us->speed, 0, sizeof(us->speed));
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -33,6 +34,7 @@ void free_user_state(
     user_state->retries = 0;
     user_state->client_fd = 0;
     user_state->state = 0;
+    user_state->skip_timer = 0;
     user_state->deadline = time(NULL);
     memset(&user_state->speed, 0, sizeof(user_state->speed));
 

@@ -302,8 +302,8 @@ int find_headers(
 			|| i == s.count) {
 				// i == s.count because (for final header):
 				// I add a null terminator in recv_header(...) before the \r\n\r\n
-				// before incrementing the pointer position by 4 to the start of body
-				// so there is no \r\n\r\n in this StringView s after the final header
+				// so there is no \r\n\r\n in this StringView s after the final
+				// header character
 
 			line_start = (last_line == 0) ? s.string : &s.string[last_line + 2];
 			count = (int)(s.string + i - line_start);
@@ -519,15 +519,22 @@ int handle_connect_request(
 	HTTPRequest *http_request,
 	HTTPResponse *http_response
 ) {
-	
-	if (1) {
+
+	// URL could contain :// as prefix to the host and port
+	// reject those requests
+	// TODO: put this in the url functions?
+	if (memmem(
+		http_request->path, 
+		strlen(http_request->path), 
+		"://", 
+		3
+	) != NULL) {
+		printf("MEMMEM fail\n");
 		return -1;
 	}
 
-	if (1) {
-		return 1;
-	}
-
+	// return 0 and tunnel is open
+	// user_state->... = TUNNEL
 	return 0;
 }
 
@@ -558,6 +565,7 @@ int handle_request(
 	UserState *user_state
 ) {
 	int result;
+	char *connect_message_buffer = NULL;
 
 	if (user_state->retries >= 3) {
 		printfid("Too many retries for client: %d", tid, client_fd);
@@ -565,19 +573,31 @@ int handle_request(
 	}
 
 	/*
-	CONNECT
-	DELETE
-	GET
-	HEAD
-	OPTIONS
-	PATCH
-	POST
-	PUT
-	TRACE
+	Need to create a predetermined table of available routes
+	with metadata to support each route available (like js object)
+	so that these methods can be implemented properly
+	right now I just decide that JSON ends up here or there
+	there is no actual routing structure
 
-	Below is a shit show.
+	and nothing matter-of-factly determining things about resources
 
-	CONNECT will need to have BODY be forever
+	if you want to request a file resource with GET then the file will be checked
+	at runtime for existence, sometimes it might exists, others maybe not
+
+	if you want to request a PAGE resource with GET then the page will be known to exist
+	before the server is compiled!?...or use a database/CMS architecture to generate/'prerender'
+	pages as static HTML that can be cached by the server and served to users (and cached by the
+	users, if they agree :).
+
+	CONNECT	: return 200 and open a TUNNEL (don't close connection)
+	DELETE	: return 405 (nothing to delete...yet)
+	GET		: return 200...if you can :)
+	HEAD	: return 405
+	OPTIONS	: return 405
+	PATCH	: return 405
+	POST	: return 405
+	PUT	 	: return 405
+	TRACE	: return 200 if resource available
 	*/
 	while (user_state->state != FIN) {
 		switch (user_state->state) {
@@ -626,11 +646,7 @@ int handle_request(
 					return -1;
 				}
 
-				user_state->state = MOVE_BODY;
-
-				if (strcmp(user_state->http_request->method, "GET") == 0) {
-					user_state->state = GET;
-				}
+				user_state->state = CHECK_REQUEST_METHOD;
 
 				break;
 			case CHECK_REQUEST_METHOD:
@@ -641,7 +657,14 @@ int handle_request(
 					user_state->state = GET;
 				} else if (check("CONNECT")) {
 					user_state->state = CONNECT;
+					user_state->skip_timer = 1;
 				} else if (check("POST")) {
+					// anything where there is a body expected should move to MOVE_BODY
+					// POST should get its own case?
+					// NO anything that doesnt need its own 'thing' (like POST)
+					// for retrieving body should just move to MOVE_BODY
+					// and then later we can #check(...) again for POST etc and then give specific case?
+					// or just reuse functions in multiple places with same call...no
 					user_state->state = MOVE_BODY;
 				} // ...
 
@@ -661,26 +684,42 @@ int handle_request(
 
 				user_state->state = FIN;
 				break;
+			/*
+			case POST:
+				
+				break;
+			*/
 			case CONNECT:
+
 				result = handle_connect_request(
 					client_fd,
 					&tid,
 					user_state->http_request,
 					user_state->http_response
 				);
+
+				printf("RESULT: %d\n", result);
 				
 				if (result < 0) {
 					return -1;
 				}
 
-				if (result == 1) {
-					// TODO:
-					// keep state the same and keep 
-					// connection (CONNECT) open.
-					continue;
-				}
+				char message[JSON_BUF_SIZE];
+				int message_length;
 
-				user_state->state = FIN;				
+				message_length = snprintf(
+					message,
+					sizeof(message),
+					"HTTP/1.1 %d %s\r\n"
+					"Connection: keep-alive\r\n"
+					"\r\n",
+					200,
+					http_status_str(200)
+				);
+
+				send_wrapper(&client_fd, message, message_length);
+
+				user_state->state = TUNNEL;
 			case MOVE_BODY:
 				if (move_body(
 					&client_fd, 
@@ -697,6 +736,10 @@ int handle_request(
 			case BODY:
 				printf("HEADERS:\n%s\n", user_state->http_request->header_storage);
 
+				// You should be able to get 'stuck' inside the BODY case if your request
+				// method allows for it (i.e. CONNECT)
+				// something like RETRY_ERROR, but like FORCED_CONTINUE or CONTINUE
+
 				result = recv_body(
 					&client_fd, 
 					&tid, 
@@ -704,15 +747,38 @@ int handle_request(
 					&user_state->http_request->body_length
 				);
 
+				/*
+				if (result == FORCED_CONTINUE) {
+					return CONTINUE;?
+					continue;
+				}
+				*/
+
 				if (result == RETRY_ERROR) {
 					return RETRY_ERROR;
 				}
+
 				if (result < 0) {
 					printfid("Failed to handle POST request", tid);
 					return -1;
 				}
 
 				user_state->state = RESPONSE;
+				break;
+			case TUNNEL:
+			
+				// just stay here :)
+				// until the client closes the connection.
+
+				for (;;) {
+
+					printf("Staying here\n");
+					// the program is NOT staying here!?
+
+				}
+
+				user_state->state = TUNNEL;
+
 				break;
 			case RESPONSE:
 				// TODO: do something with body/request
@@ -828,6 +894,11 @@ void *http_worker(
 						epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
 						continue;
 					}
+
+					printf("HR_RESULT: %d\n", hr_result);
+
+					// connect request isn't waiting on tunnel...
+					// it gets back here and the 500 is sent after and curl closes the connection
 
 					if (hr_result != 0) {
 						// no response has been sent yet.

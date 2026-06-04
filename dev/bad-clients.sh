@@ -30,3 +30,6 @@ echo "Bad client #3 (slow)"
     sleep 0.5
   done
 ) | nc 127.0.0.1 3000
+
+echo "Bad client #4 (CONNECT with :// prefix on request-target and host header)"
+curl -v -X CONNECT http://localhost:3000 --request-target ://localhost:3000 -H "Host: ://localhost:3000"

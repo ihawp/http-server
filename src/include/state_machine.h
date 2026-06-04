@@ -13,6 +13,7 @@ typedef struct {
     int retries;
     int client_fd;
     int state; // might not need state if we are only using for the one case
+    int skip_timer;
     int64_t deadline;
     HTTPRequest *http_request;
     HTTPResponse *http_response;
@@ -25,9 +26,11 @@ typedef enum {
     CHECK_HEADERS,
     CHECK_REQUEST_METHOD,
     GET,
+    // POST,
     CONNECT,
     MOVE_BODY,
     BODY,
+    TUNNEL,
     RESPONSE,
     ERROR,
     FIN
