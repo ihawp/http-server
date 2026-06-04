@@ -27,8 +27,9 @@ typedef struct {
 } RecvHeaderResult;
 
 typedef enum {
-	RETRY_ERROR = 1
-} Errors;
+	RETRY_ERROR = 1,
+	CONNECT_CONTINUE
+} ErrorsAndWarnings;
 
 void free_http_request(
 	HTTPRequest *hrq

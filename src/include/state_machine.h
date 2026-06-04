@@ -14,6 +14,7 @@ typedef struct {
     int client_fd;
     int state; // might not need state if we are only using for the one case
     int skip_timer;
+    int skip_counter; // TODO: remove (for testing NOT USED)
     int64_t deadline;
     HTTPRequest *http_request;
     HTTPResponse *http_response;

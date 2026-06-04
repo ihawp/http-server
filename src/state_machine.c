@@ -19,6 +19,7 @@ UserState *nus(int client_fd) {
     us->state = HEADERS;
     us->retries = 0;
     us->skip_timer = 0;
+    us->skip_counter = 0;
     memset(&us->speed, 0, sizeof(us->speed));
 
     clock_gettime(CLOCK_MONOTONIC, &ts);

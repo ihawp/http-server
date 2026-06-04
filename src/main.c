@@ -112,6 +112,16 @@ int main(
 			// called in the http_worker(...)
 			// will need a flag to identify the response from handle_request(...)
 			// as a CONNECT request that is STILL OPEN
+
+			// I just changed it to use the 'outer' while loop
+			// (main loop for handle_request(...)) instead of inner
+			// for loop, the inner for loop might be better since it can just
+			// stay there, but that isn't the goal, what I described above
+			// allows the handle_request(...) call to return like RETRY_ERROR
+			// where then the connection is either closed or kept open and
+			// kept stored in the hash table for safe keeping.
+			// NO MATTER WHAT CONNECT requests need to skip what happens after
+			// handle_request, just like RETRY_ERROR, I have added a flag
 			if (us && us->skip_timer == 0) {
 				printf("here and now\n");
 				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);

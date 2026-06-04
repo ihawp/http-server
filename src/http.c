@@ -773,34 +773,28 @@ int handle_request(
 				// just stay here :)
 				// until the client closes the connection.
 
-				for (int i = 0; i < 1000000; i++) {
+				// should be scanning for messages from the client
+				// recv recv recv recv recv, free the worker if no data
 
-					printfid("Staying here", tid);
-					// should be scanning for messages from the client
-					// recv recv recv recv recv
+				char massage[JSON_BUF_SIZE] = "awesome sauce and stuff";
+				send_wrapper(&client_fd, massage, strlen(massage));
 
-				}
+				user_state->skip_counter++;
 
-				char message2[JSON_BUF_SIZE];
-				int message_length2;
-
-				message_length2 = snprintf(
-					message2,
-					sizeof(message2),
-					"HTTP/1.1 %d %s\r\n"
-					"Connection: keep-alive\r\n"
-					"\r\n",
-					200,
-					http_status_str(200)
-				);
-
-				send_wrapper(&client_fd, message2, message_length2);
+				printfid("SKIP COUNTER: %d", tid, user_state->skip_counter);
 
 				// and now communication can be whatever we want
 				// just need to send some sort of flag to end the connection
 				// spec says!?...
-				if (1) {
+				if (user_state->skip_counter >= 10) {
 					user_state->state = FIN;
+					user_state->skip_counter = 0;
+
+					// return here and stay in loop
+					// for longer instead of sending the client
+					// back to not being processed immediately!?
+					// I can do whatever I want!":L!LKJ!KLJHas"
+					return CONNECT_CONTINUE;
 				}
 
 				break;
@@ -911,28 +905,19 @@ void *http_worker(
 					us->http_response->status = 200;
 					hr_result = handle_request(fd, tid, us);
 
-					if (hr_result == RETRY_ERROR) {
-						printfid("", tid);
-						us->retries++;
-						pthread_mutex_unlock(&us->mutex);
-						ev.data.fd = fd;
-						epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
-						continue;
+					switch (hr_result) {
+						case RETRY_ERROR:
+							us->retries++;
+						case CONNECT_CONTINUE:
+							pthread_mutex_unlock(&us->mutex);
+							ev.data.fd = fd;
+							epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);
+							continue;
+							break;
 					}
 
-					/*
-					[1503]: RESULT: 0
-					[1503]: Whole body found
-					[1503]: HR_RESULT: -1
-					[1503]: Elapsed: 283459 ns (0.283 ms)
-					*/
-					printfid("HR_RESULT: %d", tid, hr_result);
-
-					// connect request isn't waiting on tunnel...
-					// it gets back here and the 500 is sent after and curl closes the connection
-
 					if (hr_result != 0) {
-						// no response has been sent yet.
+						// NO response has been sent yet.
 						send_json_response(
 							&fd,
 							500, // should use the us->http_response->status
