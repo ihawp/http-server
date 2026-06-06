@@ -108,6 +108,10 @@ int main(void) {
             break;
         }
         printf("Sent: %s", buf);
+        int recv_count = recv(fd, buf, 256, 0);
+
+        printf("RECV_COUNT: %d\n", recv_count);
+
         sleep(INTERVAL);
     }
 

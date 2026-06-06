@@ -668,6 +668,8 @@ int handle_request(
 					user_state->state = MOVE_BODY;
 				} // ...
 
+				printfid("FOUND STATE: %d", tid, user_state->state);
+
 				#undef check
 
 				break;
@@ -769,6 +771,8 @@ int handle_request(
 				printf("Trying to receive bytes\n");
 				recv_result = recv(client_fd, bytes_received, CONNECT_BYTES_SIZE, 0);
 				if (recv_result <= 0) {
+					printf("recv_result: %ld\n", recv_result);
+					// indicate failure and exit the 'try'
 					return CONNECT_CONTINUE;
 				}
 				
@@ -905,8 +909,10 @@ void *http_worker(
 
 					switch (hr_result) {
 						case RETRY_ERROR:
+							printfid("RETRY_ERROR", tid);
 							us->retries++;
 						case CONNECT_CONTINUE:
+							printfid("CONNECT_CONTINUE", tid);
 							pthread_mutex_unlock(&us->mutex);
 							ev.data.fd = fd;
 							epoll_ctl(wd->epc, EPOLL_CTL_MOD, fd, &ev);

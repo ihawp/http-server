@@ -90,7 +90,10 @@ int main(
 			bool over_retry = us->retries >= 3;
 
 			if (is_expired || over_retry) {
-				expired_fds[expired_count++] = us->client_fd;
+				if (us->skip_timer == 0) {
+					printf("adding to expired\n");
+					expired_fds[expired_count++] = us->client_fd;	
+				}
 			}
 		}
 
@@ -98,33 +101,32 @@ int main(
 
 		for (int i = 0; i < expired_count; i++) {
 			// skip_timer for keep-alive/CONNECT
-			if (us->skip_timer == 0) {
-				pthread_mutex_lock(&data.lock);
-				us = ht_get(data.user_states, HT_INT(expired_fds[i]));
-				ht_remove(data.user_states, HT_INT(expired_fds[i]));
-				pthread_mutex_unlock(&data.lock);
+			printfid("Deleting Client FD #%d", data.pid, us->client_fd);
 
-				if (us) {
-					printfid("Deleting Client FD #%d", data.pid, us->client_fd);
-					epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
-					us->http_response->status = 408;
-					send_json_response(
-						&us->client_fd,
-						us->http_response->status,
-						"{"
-							"\"error\": \"Request timed out\","
-							"\"success\": false"
-						"}"
-					);
-					close(us->client_fd);
+			pthread_mutex_lock(&data.lock);
+			us = ht_get(data.user_states, HT_INT(expired_fds[i]));
+			ht_remove(data.user_states, HT_INT(expired_fds[i]));
+			pthread_mutex_unlock(&data.lock);
 
-					pthread_mutex_lock(&us->mutex);
-					ps_cap(&us->speed.end);
-					ps_print_elapsed(&us->speed, &data.pid);
-					pthread_mutex_unlock(&us->mutex);
+			if (us) {
+				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+				us->http_response->status = 408;
+				send_json_response(
+					&us->client_fd,
+					us->http_response->status,
+					"{"
+						"\"error\": \"Request timed out\","
+						"\"success\": false"
+					"}"
+				);
+				close(us->client_fd);
 
-					free_user_state(us);
-				}
+				pthread_mutex_lock(&us->mutex);
+				ps_cap(&us->speed.end);
+				ps_print_elapsed(&us->speed, &data.pid);
+				pthread_mutex_unlock(&us->mutex);
+
+				free_user_state(us);
 			}
 		}
 
