@@ -769,35 +769,35 @@ int handle_request(
 
 				// try to receive some bytes
 				printf("Trying to receive bytes\n");
-				recv_result = recv(client_fd, bytes_received, CONNECT_BYTES_SIZE, 0);
-				if (recv_result <= 0) {
-					printf("recv_result: %ld\n", recv_result);
+				recv_result = recv(client_fd, bytes_received, CONNECT_BYTES_SIZE - 1, 0);
+
+				// exit
+				// changing state to FIN is not required.
+				if (recv_result == 0) {
+					user_state->state = FIN;
+					user_state->skip_timer = 0;
+					return -1;
+				}
+				
+				if (recv_result < 0) {
+					printf("recv_result: %zd\n", recv_result);
 					// indicate failure and exit the 'try'
 					return CONNECT_CONTINUE;
 				}
+
+				bytes_received[recv_result] = '\0';
 				
 				// could save messages by writing to file per connection
 				// or just read, act, forget.
 				printfid("BYTES FROM CLIENT:\n--------\n%s--------", tid, bytes_received);
 
 				// send a random message back
-				char massage[JSON_BUF_SIZE] = "success\n";
+				char massage[CONNECT_BYTES_SIZE] = "success\n";
 				send_wrapper(&client_fd, massage, strlen(massage));
 
 				// I will just memmem for a kill signal.
 
-				if (1) {
-					printf("CONNECT_CONTINUE\n");
-					return CONNECT_CONTINUE;
-				}
-
-				if (2) {
-					// stop skipping timer and delete user
-					// in next cleanup cycle
-					printf("skip timer reset\n");
-					user_state->skip_timer = 0;
-					user_state->state = FIN;
-				}
+				return CONNECT_CONTINUE;
 
 				break;
 			case RESPONSE:
@@ -919,6 +919,8 @@ void *http_worker(
 							continue;
 							break;
 					}
+
+					printfid("AFTER SWITCH", tid);
 
 					if (hr_result != 0) {
 						// NO response has been sent yet.
