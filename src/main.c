@@ -97,51 +97,34 @@ int main(
 		pthread_mutex_unlock(&data.lock);
 
 		for (int i = 0; i < expired_count; i++) {
-			pthread_mutex_lock(&data.lock);
-			us = ht_get(data.user_states, HT_INT(expired_fds[i]));
-			ht_remove(data.user_states, HT_INT(expired_fds[i]));
-			pthread_mutex_unlock(&data.lock);
-
 			// skip_timer for keep-alive/CONNECT
-			// (incase it escapes, but it can't)
-			// I could try to make the connect asynchronous
-			// like rather then loop and totally block the worker
-			// I could just save state and keep the connection open
-			// and then let the regular loop happen, but skip the closing
-			// and shutdown, etc of the connection after handle_request(...) is
-			// called in the http_worker(...)
-			// will need a flag to identify the response from handle_request(...)
-			// as a CONNECT request that is STILL OPEN
+			if (us->skip_timer == 0) {
+				pthread_mutex_lock(&data.lock);
+				us = ht_get(data.user_states, HT_INT(expired_fds[i]));
+				ht_remove(data.user_states, HT_INT(expired_fds[i]));
+				pthread_mutex_unlock(&data.lock);
 
-			// I just changed it to use the 'outer' while loop
-			// (main loop for handle_request(...)) instead of inner
-			// for loop, the inner for loop might be better since it can just
-			// stay there, but that isn't the goal, what I described above
-			// allows the handle_request(...) call to return like RETRY_ERROR
-			// where then the connection is either closed or kept open and
-			// kept stored in the hash table for safe keeping.
-			// NO MATTER WHAT CONNECT requests need to skip what happens after
-			// handle_request, just like RETRY_ERROR, I have added a flag
-			if (us && us->skip_timer == 0) {
-				printf("here and now\n");
-				epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
-				us->http_response->status = 408;
-				send_json_response(
-					&us->client_fd,
-					us->http_response->status,
-					"{"
-						"\"error\": \"Request timed out\","
-						"\"success\": false"
-					"}"
-				);
-				close(us->client_fd);
+				if (us) {
+					printfid("Deleting Client FD #%d", data.pid, us->client_fd);
+					epoll_ctl(data.epc, EPOLL_CTL_DEL, us->client_fd, NULL);
+					us->http_response->status = 408;
+					send_json_response(
+						&us->client_fd,
+						us->http_response->status,
+						"{"
+							"\"error\": \"Request timed out\","
+							"\"success\": false"
+						"}"
+					);
+					close(us->client_fd);
 
-				pthread_mutex_lock(&us->mutex);
-				ps_cap(&us->speed.end);
-				ps_print_elapsed(&us->speed, &data.pid);
-				pthread_mutex_unlock(&us->mutex);
+					pthread_mutex_lock(&us->mutex);
+					ps_cap(&us->speed.end);
+					ps_print_elapsed(&us->speed, &data.pid);
+					pthread_mutex_unlock(&us->mutex);
 
-				free_user_state(us);
+					free_user_state(us);
+				}
 			}
 		}
 

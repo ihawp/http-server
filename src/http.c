@@ -625,6 +625,8 @@ int handle_request(
 
 				break;
 			case CHECK_HEADERS:
+				printfid("HEADERS:\n%s", tid, user_state->http_request->header_storage);
+
 				char *transfer_encoding = ht_get(
 					user_state->http_request->headers, 
 					HT_STR("Transfer-Encoding")
@@ -666,10 +668,6 @@ int handle_request(
 					user_state->state = MOVE_BODY;
 				} // ...
 
-				printfid("REQUEST METHOD: %s", tid, user_state->http_request->method);
-				printfid("STATE: %d", tid, user_state->state);
-				printfid("SKIP TIMER: %d", tid, user_state->skip_timer);
-
 				#undef check
 
 				break;
@@ -700,8 +698,6 @@ int handle_request(
 					user_state->http_response
 				);
 
-				printfid("RESULT: %d", tid, result);
-				
 				if (result < 0) {
 					return -1;
 				}
@@ -719,6 +715,8 @@ int handle_request(
 					http_status_str(200)
 				);
 
+				// Any 200 response indicates that the connection
+				// will become a tunnel immediately after responding.
 				send_wrapper(&client_fd, message, message_length);
 
 				user_state->state = TUNNEL;
@@ -737,25 +735,12 @@ int handle_request(
 				user_state->state = BODY;
 				break;
 			case BODY:
-				printfid("HEADERS:\n%s", tid, user_state->http_request->header_storage);
-
-				// You should be able to get 'stuck' inside the BODY case if your request
-				// method allows for it (i.e. CONNECT)
-				// something like RETRY_ERROR, but like FORCED_CONTINUE or CONTINUE
-
 				result = recv_body(
 					&client_fd, 
 					&tid, 
 					user_state->http_request, 
 					&user_state->http_request->body_length
 				);
-
-				/*
-				if (result == FORCED_CONTINUE) {
-					return CONTINUE;?
-					continue;
-				}
-				*/
 
 				if (result == RETRY_ERROR) {
 					return RETRY_ERROR;
@@ -776,25 +761,38 @@ int handle_request(
 				// should be scanning for messages from the client
 				// recv recv recv recv recv, free the worker if no data
 
-				char massage[JSON_BUF_SIZE] = "awesome sauce and stuff";
+				#define CONNECT_BYTES_SIZE 128
+				char bytes_received[CONNECT_BYTES_SIZE];
+				ssize_t recv_result;
+
+				// try to receive some bytes
+				printf("Trying to receive bytes\n");
+				recv_result = recv(client_fd, bytes_received, CONNECT_BYTES_SIZE, 0);
+				if (recv_result <= 0) {
+					return CONNECT_CONTINUE;
+				}
+				
+				// could save messages by writing to file per connection
+				// or just read, act, forget.
+				printfid("BYTES FROM CLIENT:\n--------\n%s--------", tid, bytes_received);
+
+				// send a random message back
+				char massage[JSON_BUF_SIZE] = "success\n";
 				send_wrapper(&client_fd, massage, strlen(massage));
 
-				user_state->skip_counter++;
+				// I will just memmem for a kill signal.
 
-				printfid("SKIP COUNTER: %d", tid, user_state->skip_counter);
-
-				// and now communication can be whatever we want
-				// just need to send some sort of flag to end the connection
-				// spec says!?...
-				if (user_state->skip_counter >= 10) {
-					user_state->state = FIN;
-					user_state->skip_counter = 0;
-
-					// return here and stay in loop
-					// for longer instead of sending the client
-					// back to not being processed immediately!?
-					// I can do whatever I want!":L!LKJ!KLJHas"
+				if (1) {
+					printf("CONNECT_CONTINUE\n");
 					return CONNECT_CONTINUE;
+				}
+
+				if (2) {
+					// stop skipping timer and delete user
+					// in next cleanup cycle
+					printf("skip timer reset\n");
+					user_state->skip_timer = 0;
+					user_state->state = FIN;
 				}
 
 				break;
